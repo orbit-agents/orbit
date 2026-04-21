@@ -1,0 +1,8 @@
+node_modules
+dist
+build
+.turbo
+target
+pnpm-lock.yaml
+Cargo.lock
+apps/desktop/src-tauri/gen

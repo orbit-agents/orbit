@@ -1,0 +1,23 @@
+name: Release
+
+# TODO(phase-1+): Wire this up with `tauri-action` to build and sign
+# installers for macOS (.dmg / .app), Windows (.msi / .exe), and Linux
+# (.AppImage / .deb). See:
+#   https://github.com/tauri-apps/tauri-action
+#
+# Before enabling, we need:
+#   - Apple Developer ID cert + App-Specific Password secrets
+#   - Windows code-signing certificate secret
+#   - A tag-based trigger and a GitHub release workflow
+#
+# This file is intentionally a stub so that the workflow path exists and
+# future changes show up clearly in review.
+
+on:
+  workflow_dispatch:
+
+jobs:
+  placeholder:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "Release workflow is a stub — see comments at top of file."

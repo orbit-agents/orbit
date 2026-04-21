@@ -1,0 +1,47 @@
+@import '@fontsource/inter/400.css';
+@import '@fontsource/inter/500.css';
+@import '@fontsource/inter/600.css';
+@import '@fontsource/jetbrains-mono/400.css';
+@import '@fontsource/jetbrains-mono/500.css';
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --color-bg-app: #0a0a0b;
+  --color-bg-panel: #111113;
+  --color-bg-elevated: #17171a;
+  --color-bg-hover: #1e1e22;
+  --color-border-subtle: #1f1f23;
+  --color-border: #2a2a2f;
+  --color-text-primary: #ededee;
+  --color-text-secondary: #9b9ba3;
+  --color-text-tertiary: #5f5f67;
+  --color-accent: #5e6ad2;
+  --color-status-active: #22c55e;
+  --color-status-waiting: #eab308;
+  --color-status-error: #ef4444;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  font-family: 'Inter', ui-sans-serif, system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  overscroll-behavior: none;
+  user-select: none;
+}
+
+/* Allow text selection inside content-editable and inputs */
+input,
+textarea,
+[contenteditable] {
+  user-select: text;
+}

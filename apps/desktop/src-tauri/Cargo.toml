@@ -1,0 +1,69 @@
+[package]
+name = "orbit"
+version = "0.0.0"
+description = "Orbit — your AI agents, in orbit around your work."
+authors = ["Orbit contributors"]
+edition = "2021"
+rust-version = "1.77"
+license = "MIT"
+repository = ""
+default-run = "orbit"
+
+[lib]
+name = "orbit_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+# Tauri 2 runtime
+tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2"
+
+# Async runtime
+tokio = { version = "1", features = ["full"] }
+async-trait = "0.1"
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Database
+sqlx = { version = "0.8", features = ["sqlite", "runtime-tokio-rustls", "macros", "chrono", "uuid"] }
+
+# IDs
+uuid = { version = "1", features = ["v4", "serde"] }
+
+# Time
+chrono = { version = "0.4", features = ["serde"] }
+
+# Observability
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Errors
+thiserror = "2"
+anyhow = "1"
+
+# Git
+git2 = "0.19"
+
+# PTY for terminal integration (Phase 8)
+portable-pty = "0.8"
+
+[features]
+# Default feature flags. `custom-protocol` is enabled in release builds to
+# wire the Tauri custom protocol; dev builds serve frontend from Vite.
+default = ["custom-protocol"]
+custom-protocol = ["tauri/custom-protocol"]
+
+[dev-dependencies]
+tokio = { version = "1", features = ["macros", "rt", "test-util"] }
+
+[profile.release]
+panic = "abort"
+codegen-units = 1
+lto = true
+opt-level = "s"
+strip = true
