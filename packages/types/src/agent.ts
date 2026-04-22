@@ -31,9 +31,11 @@ export interface Agent {
   folderAccess: string;
   teamId: string | null;
 
-  // Phase 2 — canvas position. Null until the canvas lands.
-  positionX: number | null;
-  positionY: number | null;
+  // Phase 2 — canvas position, always present (default 0,0 for
+  // agents spawned before the canvas shipped; backfilled by migration
+  // 0002 and enforced at the application layer thereafter).
+  positionX: number;
+  positionY: number;
 
   createdAt: string;
   updatedAt: string;

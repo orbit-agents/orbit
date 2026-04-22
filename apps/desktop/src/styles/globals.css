@@ -45,3 +45,66 @@ textarea,
 [contenteditable] {
   user-select: text;
 }
+
+/*
+ * Canvas visuals — kept out of Tailwind so the keyframes live in one place
+ * and so platform emoji fonts stack correctly on Windows/Linux.
+ */
+
+.orbit-pulse {
+  animation: orbit-heartbeat 2s ease-in-out infinite;
+}
+
+@keyframes orbit-heartbeat {
+  0% {
+    opacity: 0.7;
+  }
+  50% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0.7;
+  }
+}
+
+.orbit-emoji {
+  font-family:
+    'Apple Color Emoji',
+    'Segoe UI Emoji',
+    'Noto Color Emoji',
+    'Twemoji Mozilla',
+    'EmojiOne Color',
+    sans-serif;
+  font-feature-settings: 'liga';
+}
+
+/*
+ * React Flow overrides. We use React Flow's required CSS but paint the
+ * attribution logo out (free tier shows it by default) and keep the
+ * control styles consistent with our panels.
+ */
+
+.react-flow__pane {
+  cursor: default;
+}
+
+.react-flow__node-agentNode {
+  background: transparent;
+  border: none;
+  padding: 0;
+  width: auto;
+  height: auto;
+}
+
+.react-flow__handle {
+  display: none;
+}
+
+.shadow-card {
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2);
+}
+
+.shadow-drag {
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+}
+

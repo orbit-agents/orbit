@@ -17,8 +17,8 @@ function makeAgent(id: string): Agent {
     memory: null,
     folderAccess: '[]',
     teamId: null,
-    positionX: null,
-    positionY: null,
+    positionX: 0,
+    positionY: 0,
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
   };
@@ -28,10 +28,13 @@ function reset(): void {
   useAgentsStore.setState({
     agents: {},
     orderedAgentIds: [],
-    activeAgentId: null,
+    selectedAgentId: null,
     messagesByAgent: {},
     streamingByAgent: {},
     lastErrorByAgent: {},
+    chatDraftByAgent: {},
+    chatScrollByAgent: {},
+    draggingAgentId: null,
   });
 }
 
@@ -146,11 +149,11 @@ describe('agents store / applyEvent', () => {
 
   it('hydrate replaces the agent set and picks the first as active', () => {
     useAgentsStore.getState().hydrate([makeAgent('a'), makeAgent('b')]);
-    expect(useAgentsStore.getState().activeAgentId).toBe('a');
+    expect(useAgentsStore.getState().selectedAgentId).toBe('a');
     expect(useAgentsStore.getState().orderedAgentIds).toEqual(['a', 'b']);
   });
 
-  it('removeAgent drops the row, its messages, its streaming state, and rewires activeAgentId', () => {
+  it('removeAgent drops the row, its messages, its streaming state, and rewires selectedAgentId', () => {
     useAgentsStore.getState().hydrate([makeAgent('a'), makeAgent('b')]);
     useAgentsStore.getState().applyEvent('a', { type: 'text_delta', content: 'x' });
     useAgentsStore.getState().setMessages('a', [
@@ -165,7 +168,7 @@ describe('agents store / applyEvent', () => {
 
     useAgentsStore.getState().removeAgent('a');
     expect(useAgentsStore.getState().agents['a']).toBeUndefined();
-    expect(useAgentsStore.getState().activeAgentId).toBe('b');
+    expect(useAgentsStore.getState().selectedAgentId).toBe('b');
     expect(useAgentsStore.getState().messagesByAgent['a']).toBeUndefined();
     expect(useAgentsStore.getState().streamingByAgent['a']).toBeUndefined();
   });

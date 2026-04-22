@@ -3,13 +3,15 @@ import type { Agent, AgentEvent, Message, TokenUsage } from '@orbit/types';
 
 export type AgentId = string;
 
+export interface XY {
+  x: number;
+  y: number;
+}
+
 /** One in-progress assistant turn, accumulated from streaming events. */
 export interface StreamingTurn {
-  /** Live assistant text as it streams in. */
   text: string;
-  /** Tool calls encountered during this turn, in order. */
   toolCalls: StreamingToolCall[];
-  /** Token usage reported at turn completion; null until the turn ends. */
   usage: TokenUsage | null;
 }
 
@@ -17,39 +19,62 @@ export interface StreamingToolCall {
   toolId: string;
   toolName: string;
   input: unknown;
-  /** True once a matching `tool_use_complete` has arrived. */
   complete: boolean;
-  /** The tool's result, once it arrives. */
   result: string | null;
-  /** Whether the tool reported an error. */
   isError: boolean;
 }
 
 interface AgentsState {
   agents: Record<AgentId, Agent>;
   orderedAgentIds: AgentId[];
-  activeAgentId: AgentId | null;
+
+  /** Currently-selected agent on the canvas / in the right panel. */
+  selectedAgentId: AgentId | null;
+
   messagesByAgent: Record<AgentId, Message[]>;
   streamingByAgent: Record<AgentId, StreamingTurn | null>;
   lastErrorByAgent: Record<AgentId, string | null>;
+
+  /** Per-agent chat-input draft text. Preserved across agent switches. */
+  chatDraftByAgent: Record<AgentId, string>;
+
+  /** Per-agent scroll offset (pixels from top) for the chat panel. */
+  chatScrollByAgent: Record<AgentId, number>;
+
+  /** Transient flag: true while a drag is in progress for an agent so
+   *  downstream consumers (e.g. position persistence) know when to write. */
+  draggingAgentId: AgentId | null;
 
   hydrate: (agents: Agent[]) => void;
   upsertAgent: (agent: Agent) => void;
   removeAgent: (agentId: AgentId) => void;
   selectAgent: (agentId: AgentId | null) => void;
+  renameAgent: (agentId: AgentId, name: string) => void;
+
   setMessages: (agentId: AgentId, messages: Message[]) => void;
   appendPersistedMessage: (agentId: AgentId, message: Message) => void;
+
   applyEvent: (agentId: AgentId, event: AgentEvent) => void;
   setAgentStatus: (agentId: AgentId, status: string) => void;
+
+  updateAgentPosition: (agentId: AgentId, position: XY) => void;
+
+  setChatDraft: (agentId: AgentId, text: string) => void;
+  setChatScroll: (agentId: AgentId, offset: number) => void;
+
+  setDraggingAgent: (agentId: AgentId | null) => void;
 }
 
 export const useAgentsStore = create<AgentsState>((set, get) => ({
   agents: {},
   orderedAgentIds: [],
-  activeAgentId: null,
+  selectedAgentId: null,
   messagesByAgent: {},
   streamingByAgent: {},
   lastErrorByAgent: {},
+  chatDraftByAgent: {},
+  chatScrollByAgent: {},
+  draggingAgentId: null,
 
   hydrate: (agents) =>
     set(() => {
@@ -62,7 +87,7 @@ export const useAgentsStore = create<AgentsState>((set, get) => ({
       return {
         agents: map,
         orderedAgentIds: order,
-        activeAgentId: order[0] ?? null,
+        selectedAgentId: order[0] ?? null,
       };
     }),
 
@@ -74,26 +99,39 @@ export const useAgentsStore = create<AgentsState>((set, get) => ({
       return {
         agents: { ...s.agents, [agent.id]: agent },
         orderedAgentIds: order,
-        activeAgentId: s.activeAgentId ?? agent.id,
+        selectedAgentId: s.selectedAgentId ?? agent.id,
       };
     }),
 
   removeAgent: (agentId) =>
     set((s) => {
-      const { [agentId]: _discarded, ...rest } = s.agents;
+      const { [agentId]: _agent, ...restAgents } = s.agents;
       const order = s.orderedAgentIds.filter((id) => id !== agentId);
       const { [agentId]: _m, ...restMessages } = s.messagesByAgent;
       const { [agentId]: _st, ...restStream } = s.streamingByAgent;
+      const { [agentId]: _d, ...restDraft } = s.chatDraftByAgent;
+      const { [agentId]: _sc, ...restScroll } = s.chatScrollByAgent;
       return {
-        agents: rest,
+        agents: restAgents,
         orderedAgentIds: order,
-        activeAgentId: s.activeAgentId === agentId ? (order[0] ?? null) : s.activeAgentId,
+        selectedAgentId: s.selectedAgentId === agentId ? (order[0] ?? null) : s.selectedAgentId,
         messagesByAgent: restMessages,
         streamingByAgent: restStream,
+        chatDraftByAgent: restDraft,
+        chatScrollByAgent: restScroll,
       };
     }),
 
-  selectAgent: (agentId) => set(() => ({ activeAgentId: agentId })),
+  selectAgent: (agentId) => set(() => ({ selectedAgentId: agentId })),
+
+  renameAgent: (agentId, name) =>
+    set((s) => {
+      const agent = s.agents[agentId];
+      if (!agent) return s;
+      return {
+        agents: { ...s.agents, [agentId]: { ...agent, name } },
+      };
+    }),
 
   setMessages: (agentId, messages) =>
     set((s) => ({
@@ -103,9 +141,7 @@ export const useAgentsStore = create<AgentsState>((set, get) => ({
   appendPersistedMessage: (agentId, message) =>
     set((s) => {
       const existing = s.messagesByAgent[agentId] ?? [];
-      if (existing.some((m) => m.id === message.id)) {
-        return s;
-      }
+      if (existing.some((m) => m.id === message.id)) return s;
       return {
         messagesByAgent: {
           ...s.messagesByAgent,
@@ -123,9 +159,32 @@ export const useAgentsStore = create<AgentsState>((set, get) => ({
       };
     }),
 
+  updateAgentPosition: (agentId, position) =>
+    set((s) => {
+      const agent = s.agents[agentId];
+      if (!agent) return s;
+      return {
+        agents: {
+          ...s.agents,
+          [agentId]: { ...agent, positionX: position.x, positionY: position.y },
+        },
+      };
+    }),
+
+  setChatDraft: (agentId, text) =>
+    set((s) => ({
+      chatDraftByAgent: { ...s.chatDraftByAgent, [agentId]: text },
+    })),
+
+  setChatScroll: (agentId, offset) =>
+    set((s) => ({
+      chatScrollByAgent: { ...s.chatScrollByAgent, [agentId]: offset },
+    })),
+
+  setDraggingAgent: (agentId) => set(() => ({ draggingAgentId: agentId })),
+
   applyEvent: (agentId, event) => {
     const current = get().streamingByAgent[agentId] ?? null;
-
     const ensure = (): StreamingTurn => current ?? { text: '', toolCalls: [], usage: null };
 
     switch (event.type) {
@@ -148,9 +207,7 @@ export const useAgentsStore = create<AgentsState>((set, get) => ({
         return;
       }
       case 'thinking_delta': {
-        // Phase 1 renders thinking inline as dimmed text, using the same
-        // `text` buffer would conflate it with final output — for now we
-        // just ignore. Phase 3 will add a dedicated thinking channel.
+        // Phase 3 will wire thinking into a dedicated channel.
         return;
       }
       case 'tool_use_start': {
@@ -203,9 +260,6 @@ export const useAgentsStore = create<AgentsState>((set, get) => ({
         return;
       }
       case 'turn_complete': {
-        // Clear the streaming buffer. Persisted rows will arrive via
-        // `appendPersistedMessage` or on next load; Phase 1 keeps it
-        // simple and re-fetches from the DB on demand.
         set((s) => ({
           streamingByAgent: { ...s.streamingByAgent, [agentId]: null },
           lastErrorByAgent: { ...s.lastErrorByAgent, [agentId]: null },
@@ -220,10 +274,36 @@ export const useAgentsStore = create<AgentsState>((set, get) => ({
         return;
       }
       default: {
-        // Exhaustiveness sentinel — unknown future variant.
         const _unreachable: never = event;
         void _unreachable;
       }
     }
   },
 }));
+
+/**
+ * Heuristic for the status ring on the canvas. Derived fresh each render
+ * so we don't drift when the persisted row and the streaming state
+ * disagree.
+ *
+ * Phase 1's status column on the DB is still authoritative for error
+ * cases; Phase 2 lifts "active" and "waiting_for_human" into the store.
+ */
+export type DerivedStatus = 'idle' | 'active' | 'waiting_for_human' | 'error';
+
+export function deriveStatus(
+  agent: Agent,
+  streaming: StreamingTurn | null,
+  lastError: string | null,
+  lastAssistantText: string | null,
+): DerivedStatus {
+  if (agent.status === 'error' || lastError) return 'error';
+  if (streaming !== null) return 'active';
+  // Heuristic: an agent is "waiting for human" if its last assistant
+  // message ended with a question mark and no tool calls are pending.
+  // Phase 7 replaces this with an explicit help flag.
+  if (lastAssistantText && /[?？]\s*$/u.test(lastAssistantText)) {
+    return 'waiting_for_human';
+  }
+  return 'idle';
+}

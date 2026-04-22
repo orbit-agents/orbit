@@ -51,7 +51,7 @@ export function AgentList({ onSpawnClick }: Props): JSX.Element {
   const agents = useAgentsStore(
     (s) => s.orderedAgentIds.map((id) => s.agents[id]).filter(Boolean) as Agent[],
   );
-  const activeAgentId = useAgentsStore((s) => s.activeAgentId);
+  const selectedAgentId = useAgentsStore((s) => s.selectedAgentId);
   const selectAgent = useAgentsStore((s) => s.selectAgent);
 
   return (
@@ -76,7 +76,7 @@ export function AgentList({ onSpawnClick }: Props): JSX.Element {
             <AgentRow
               key={a.id}
               agent={a}
-              selected={a.id === activeAgentId}
+              selected={a.id === selectedAgentId}
               onClick={() => selectAgent(a.id)}
             />
           ))

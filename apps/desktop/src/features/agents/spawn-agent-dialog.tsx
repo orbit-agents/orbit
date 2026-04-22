@@ -55,9 +55,11 @@ const COLORS = [
 interface Props {
   open: boolean;
   onClose: () => void;
+  /** Canvas position at which to place the new agent. Omit for origin. */
+  position?: { x: number; y: number } | null;
 }
 
-export function SpawnAgentDialog({ open, onClose }: Props): JSX.Element | null {
+export function SpawnAgentDialog({ open, onClose, position }: Props): JSX.Element | null {
   const [name, setName] = useState('');
   const [emoji, setEmoji] = useState<string>(EMOJIS[0]);
   const [color, setColor] = useState<string>(COLORS[0]);
@@ -117,6 +119,8 @@ export function SpawnAgentDialog({ open, onClose }: Props): JSX.Element | null {
       emoji,
       color,
       workingDir,
+      positionX: position?.x ?? 0,
+      positionY: position?.y ?? 0,
     });
   };
 

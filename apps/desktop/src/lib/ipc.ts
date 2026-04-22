@@ -8,6 +8,8 @@ export interface SpawnAgentInput {
   color: string;
   workingDir: string;
   modelOverride?: string | null;
+  positionX?: number;
+  positionY?: number;
 }
 
 export function ipcAgentSpawn(input: SpawnAgentInput): Promise<Agent> {
@@ -32,6 +34,14 @@ export function ipcAgentTerminate(agentId: string): Promise<void> {
 
 export function ipcAgentDelete(agentId: string): Promise<void> {
   return invoke<void>('agent_delete', { agentId });
+}
+
+export function ipcAgentUpdatePosition(agentId: string, x: number, y: number): Promise<void> {
+  return invoke<void>('agent_update_position', { agentId, x, y });
+}
+
+export function ipcAgentRename(agentId: string, name: string): Promise<void> {
+  return invoke<void>('agent_rename', { agentId, name });
 }
 
 export function ipcSystemHealthCheck(): Promise<SystemHealth> {

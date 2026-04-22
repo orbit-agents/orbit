@@ -12,34 +12,34 @@ import {
 import { ChatInput } from './chat-input';
 
 export function AgentChatPanel(): JSX.Element {
-  const activeAgentId = useAgentsStore((s) => s.activeAgentId);
-  const agent = useAgentsStore((s) => (s.activeAgentId ? s.agents[s.activeAgentId] : null));
+  const selectedAgentId = useAgentsStore((s) => s.selectedAgentId);
+  const agent = useAgentsStore((s) => (s.selectedAgentId ? s.agents[s.selectedAgentId] : null));
   const messages = useAgentsStore((s) =>
-    s.activeAgentId ? (s.messagesByAgent[s.activeAgentId] ?? []) : [],
+    s.selectedAgentId ? (s.messagesByAgent[s.selectedAgentId] ?? []) : [],
   );
   const streaming = useAgentsStore((s) =>
-    s.activeAgentId ? s.streamingByAgent[s.activeAgentId] : null,
+    s.selectedAgentId ? s.streamingByAgent[s.selectedAgentId] : null,
   );
   const lastError = useAgentsStore((s) =>
-    s.activeAgentId ? s.lastErrorByAgent[s.activeAgentId] : null,
+    s.selectedAgentId ? s.lastErrorByAgent[s.selectedAgentId] : null,
   );
   const setMessages = useAgentsStore((s) => s.setMessages);
 
   useQuery({
-    queryKey: ['conversation', activeAgentId],
+    queryKey: ['conversation', selectedAgentId],
     queryFn: async () => {
-      if (!activeAgentId) return [];
-      const msgs = await ipcAgentGetConversation(activeAgentId);
-      setMessages(activeAgentId, msgs);
+      if (!selectedAgentId) return [];
+      const msgs = await ipcAgentGetConversation(selectedAgentId);
+      setMessages(selectedAgentId, msgs);
       return msgs;
     },
-    enabled: Boolean(activeAgentId),
+    enabled: Boolean(selectedAgentId),
   });
 
   const send = useMutation({
     mutationFn: async (text: string) => {
-      if (!activeAgentId) return;
-      await ipcAgentSendMessage(activeAgentId, text);
+      if (!selectedAgentId) return;
+      await ipcAgentSendMessage(selectedAgentId, text);
     },
   });
 

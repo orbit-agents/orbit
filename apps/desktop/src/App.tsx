@@ -8,6 +8,8 @@ import { AgentList } from '@/features/agents/agent-list';
 import { SpawnAgentDialog } from '@/features/agents/spawn-agent-dialog';
 import { AgentChatPanel } from '@/features/agents/agent-chat-panel';
 import { SystemHealthSetupView } from '@/features/agents/system-health-banner';
+import { Canvas } from '@/features/canvas/canvas';
+import type { XY } from '@/stores/agents';
 import { useKeyboardShortcut } from '@/hooks/use-keyboard-shortcut';
 import { useAgentEvents } from '@/hooks/use-agent-events';
 import { useUiStore } from '@/stores/ui-store';
@@ -49,6 +51,12 @@ export function App(): JSX.Element {
 
   const hydrate = useAgentsStore((s) => s.hydrate);
   const [spawnOpen, setSpawnOpen] = useState(false);
+  const [spawnPosition, setSpawnPosition] = useState<XY | null>(null);
+
+  const openSpawnDialog = useCallback((position: XY | null) => {
+    setSpawnPosition(position);
+    setSpawnOpen(true);
+  }, []);
 
   useAgentEvents();
 
@@ -68,15 +76,11 @@ export function App(): JSX.Element {
     },
   });
 
-  // Gate the UI on health. Show setup view if engine is not available or
-  // not authenticated.
   const engine = health.data?.engine ?? null;
   const blockedOnSetup = health.isSuccess && (!engine?.available || !engine?.authenticated);
 
   useEffect(() => {
     if (health.isError) {
-      // If the health check itself failed, keep trying every few seconds
-      // so a freshly-installed CLI is picked up without manual refresh.
       const id = setInterval(() => void health.refetch(), 4000);
       return () => clearInterval(id);
     }
@@ -106,7 +110,7 @@ export function App(): JSX.Element {
             <Panel defaultSize={18} minSize={14} maxSize={26} className="min-w-[260px]">
               <div className="flex h-full flex-col bg-panel">
                 <Sidebar />
-                <AgentList onSpawnClick={() => setSpawnOpen(true)} />
+                <AgentList onSpawnClick={() => openSpawnDialog(null)} />
               </div>
             </Panel>
             <ResizeHandle />
@@ -114,13 +118,7 @@ export function App(): JSX.Element {
         ) : null}
 
         <Panel defaultSize={rightPanelOpen ? 58 : 82} minSize={30}>
-          {canvasOpen ? (
-            <CanvasPlaceholder />
-          ) : (
-            <div className="flex h-full items-center justify-center bg-app text-13 text-text-tertiary">
-              canvas hidden — Cmd/Ctrl+E to show
-            </div>
-          )}
+          {canvasOpen ? <Canvas onRequestSpawn={openSpawnDialog} /> : <CanvasPlaceholder />}
         </Panel>
 
         {rightPanelOpen ? (
@@ -133,7 +131,14 @@ export function App(): JSX.Element {
         ) : null}
       </PanelGroup>
 
-      <SpawnAgentDialog open={spawnOpen} onClose={() => setSpawnOpen(false)} />
+      <SpawnAgentDialog
+        open={spawnOpen}
+        onClose={() => {
+          setSpawnOpen(false);
+          setSpawnPosition(null);
+        }}
+        position={spawnPosition}
+      />
     </div>
   );
 }
