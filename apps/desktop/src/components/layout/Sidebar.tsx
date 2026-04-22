@@ -24,7 +24,7 @@ function SidebarSection({ title, icon: Icon, children }: SidebarSectionProps): J
 export function Sidebar(): JSX.Element {
   return (
     <aside
-      className={cn('flex h-full flex-col bg-panel', 'border-r border-border-subtle')}
+      className={cn('flex flex-col border-r border-border-subtle bg-panel')}
       aria-label="Sidebar"
     >
       <div className="flex items-center gap-2 border-b border-border-subtle px-3 py-2">
@@ -38,7 +38,7 @@ export function Sidebar(): JSX.Element {
           )}
         />
       </div>
-      <div className="flex-1 overflow-y-auto">
+      <div className="overflow-y-auto">
         <SidebarSection title="Folders" icon={FolderIcon} />
         <SidebarSection title="DMs" icon={MessageSquareIcon} />
         <SidebarSection title="Groups" icon={UsersIcon} />

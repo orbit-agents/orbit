@@ -1,11 +1,18 @@
-import { useCallback } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Panel, PanelGroup, PanelResizeHandle } from 'react-resizable-panels';
+import { useQuery } from '@tanstack/react-query';
 import { TopBar } from '@/components/layout/TopBar';
 import { Sidebar } from '@/components/layout/Sidebar';
 import { CanvasPlaceholder } from '@/components/layout/CanvasPlaceholder';
-import { RightPanel } from '@/components/layout/RightPanel';
+import { AgentList } from '@/features/agents/agent-list';
+import { SpawnAgentDialog } from '@/features/agents/spawn-agent-dialog';
+import { AgentChatPanel } from '@/features/agents/agent-chat-panel';
+import { SystemHealthSetupView } from '@/features/agents/system-health-banner';
 import { useKeyboardShortcut } from '@/hooks/use-keyboard-shortcut';
+import { useAgentEvents } from '@/hooks/use-agent-events';
 import { useUiStore } from '@/stores/ui-store';
+import { useAgentsStore } from '@/stores/agents';
+import { ipcAgentList, ipcSystemHealthCheck } from '@/lib/ipc';
 import { cn } from '@/lib/cn';
 
 function ResizeHandle(): JSX.Element {
@@ -40,6 +47,56 @@ export function App(): JSX.Element {
     useCallback(() => toggleCanvas(), [toggleCanvas]),
   );
 
+  const hydrate = useAgentsStore((s) => s.hydrate);
+  const [spawnOpen, setSpawnOpen] = useState(false);
+
+  useAgentEvents();
+
+  const health = useQuery({
+    queryKey: ['system-health'],
+    queryFn: ipcSystemHealthCheck,
+    retry: false,
+  });
+
+  useQuery({
+    queryKey: ['agents'],
+    enabled: Boolean(health.data?.engine.available && health.data?.engine.authenticated),
+    queryFn: async () => {
+      const agents = await ipcAgentList();
+      hydrate(agents);
+      return agents;
+    },
+  });
+
+  // Gate the UI on health. Show setup view if engine is not available or
+  // not authenticated.
+  const engine = health.data?.engine ?? null;
+  const blockedOnSetup = health.isSuccess && (!engine?.available || !engine?.authenticated);
+
+  useEffect(() => {
+    if (health.isError) {
+      // If the health check itself failed, keep trying every few seconds
+      // so a freshly-installed CLI is picked up without manual refresh.
+      const id = setInterval(() => void health.refetch(), 4000);
+      return () => clearInterval(id);
+    }
+    return;
+  }, [health]);
+
+  if (health.isLoading) {
+    return (
+      <div className="flex h-full items-center justify-center bg-app text-13 text-text-tertiary">
+        Loading…
+      </div>
+    );
+  }
+
+  if (blockedOnSetup) {
+    return (
+      <SystemHealthSetupView health={health.data ?? null} onRecheck={() => void health.refetch()} />
+    );
+  }
+
   return (
     <div className="flex h-full w-full flex-col bg-app text-text-primary">
       <TopBar />
@@ -47,7 +104,10 @@ export function App(): JSX.Element {
         {sidebarOpen ? (
           <>
             <Panel defaultSize={18} minSize={14} maxSize={26} className="min-w-[260px]">
-              <Sidebar />
+              <div className="flex h-full flex-col bg-panel">
+                <Sidebar />
+                <AgentList onSpawnClick={() => setSpawnOpen(true)} />
+              </div>
             </Panel>
             <ResizeHandle />
           </>
@@ -67,11 +127,13 @@ export function App(): JSX.Element {
           <>
             <ResizeHandle />
             <Panel defaultSize={24} minSize={18} maxSize={34} className="min-w-[360px]">
-              <RightPanel />
+              <AgentChatPanel />
             </Panel>
           </>
         ) : null}
       </PanelGroup>
+
+      <SpawnAgentDialog open={spawnOpen} onClose={() => setSpawnOpen(false)} />
     </div>
   );
 }
