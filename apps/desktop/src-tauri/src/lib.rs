@@ -57,7 +57,20 @@ pub fn run() {
                 .map_err(|e| format!("database initialization failed: {e}"))?;
 
             let supervisor = Arc::new(Supervisor::default());
-            let engine = Arc::new(ClaudeCodeEngine::new());
+            let engine: Arc<dyn crate::agents::engine::AgentEngine> =
+                Arc::new(ClaudeCodeEngine::new());
+
+            // Rehydrate persisted agents best-effort so users find their
+            // conversations alive after a restart.
+            let pool_for_rehydrate = pool.clone();
+            let engine_for_rehydrate = Arc::clone(&engine);
+            tauri::async_runtime::spawn(async move {
+                if let Err(e) =
+                    core::rehydrate_agents(&pool_for_rehydrate, &*engine_for_rehydrate).await
+                {
+                    tracing::error!(error = %e, "rehydration failed");
+                }
+            });
 
             let state = AppState {
                 pool,

@@ -24,7 +24,7 @@
 //!   well-known install locations (see [`discover_claude_executable`]).
 
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
