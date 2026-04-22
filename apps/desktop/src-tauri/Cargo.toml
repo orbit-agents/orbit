@@ -23,6 +23,7 @@ tauri-plugin-dialog = "2"
 
 # Async runtime
 tokio = { version = "1", features = ["full"] }
+tokio-stream = "0.1"
 async-trait = "0.1"
 futures = "0.3"
 
@@ -53,6 +54,9 @@ git2 = "0.19"
 # PTY for terminal integration (Phase 8)
 portable-pty = "0.8"
 
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
 [features]
 # Default feature flags. `custom-protocol` is enabled in release builds to
 # wire the Tauri custom protocol; dev builds serve frontend from Vite.
@@ -61,6 +65,7 @@ custom-protocol = ["tauri/custom-protocol"]
 
 [dev-dependencies]
 tokio = { version = "1", features = ["macros", "rt", "test-util"] }
+tempfile = "3"
 
 [profile.release]
 panic = "abort"
