@@ -21,7 +21,7 @@ Spawn a single Claude Code subprocess, stream output to a chat panel, persist co
 7. **Empty message.** Send button stays disabled; the command rejects empty input.
 8. **Cross-platform.** Same flow on macOS, Windows, and Linux (requires `webkit2gtk-4.1`).
 
-## Phase 2 — Canvas + multiple agents · _In Progress_
+## Phase 2 — Canvas + multiple agents · _Complete_
 
 React Flow canvas with multiple agent nodes; each agent is an independent Claude Code subprocess with its own conversation, draft, and scroll state; selection syncs across canvas/sidebar/right panel.
 
@@ -45,9 +45,28 @@ React Flow canvas with multiple agent nodes; each agent is an independent Claude
 14. **Cmd/Ctrl+Shift+N.** Opens the spawn dialog at the viewport center.
 15. **Cross-platform.** Same flow on macOS, Windows, and Linux.
 
-## Phase 3 — Agent identity + memory · _Planned_
+## Phase 3 — Agent identity + memory · _In Progress_
 
-Soul / Purpose / Memory fields on the agent. System prompt built by templating these three plus global context. Memory is persistent and editable.
+Soul / Purpose / Memory fields on the agent. System prompt built by templating these three plus global context. Memory is persistent, editable by the human, and writable by the agent itself via a `<remember>` pseudo-tool.
+
+**Deliverable:** edit an agent's Soul / Purpose, watch it speak in that voice on the next message; correct it once and watch it save the correction to memory and not repeat the mistake; close the app and reopen — identity and memory survive.
+
+### Manual test checklist
+
+1. **Identity persona.** Edit Soul to "I always use TypeScript strict mode and prefer `unknown` over `any`." Send a message asking for a function that takes JSON input. Verify the result reflects the soul.
+2. **Identity-pending pill.** Edit Soul; observe the amber "Identity pending" pill in the right-panel header. Send a message; the pill clears once the next turn fires.
+3. **Live identity update.** Change Soul to "I prefer pragmatic JS — `any` is fine for prototypes." Send another message. Next response reflects the new soul (and you can confirm the `<system_update>` block shows up if you peek at the raw prompts).
+4. **Agent self-correction.** Tell the agent "remember that we use Tailwind v3, not v4." A new entry with the bot icon appears at the top of the Memory list with a brief accent highlight that fades.
+5. **Memory persistence across restart.** Tell the agent "remember the table is `usres` not `users`." Quit the app, wait, reopen. Send a query about the users table. The agent uses `usres`.
+6. **Memory edit.** Edit a memory entry inline (pencil → edit → Save). Send a new message. The agent's response reflects the edited memory.
+7. **Memory delete.** Delete an entry. The "Identity pending" pill appears. Send a new message — the model no longer references the deleted fact.
+8. **CLAUDE.md import (toggle off).** Spawn a new agent in a directory containing a `CLAUDE.md`. The Purpose stays empty. No memory entry created.
+9. **CLAUDE.md import (toggle on).** Flip the Advanced > "Import CLAUDE.md on spawn" toggle. Spawn a new agent. Purpose now contains the file's contents; an "imported" memory entry notes the source path.
+10. **Import now button.** For an already-spawned agent, drop a `CLAUDE.md` into its working dir, click "Import now". Same effect.
+11. **Memory cap.** Add 60 memory entries via the Add memory button. The system prompt only includes the 50 most recent (verify if peeking at prompts), but all 60 are visible in the UI.
+12. **Long memory truncation.** Have the agent emit a `<remember>` marker with > 8KB content (you may need to coax it). The entry is saved with a `[…truncated by Orbit at 8KB]` suffix and the Rust logs show a `tracing::warn!` line.
+13. **Marker discussion safety.** Ask the agent "what's the syntax of the remember tool?" — the agent's reply mentions `<remember>...</remember>` mid-prose; verify no spurious memory entry is created.
+14. **Cross-platform.** Same flow on macOS, Windows, and Linux.
 
 ## Phase 4 — Agent-to-agent messaging · _Planned_
 
