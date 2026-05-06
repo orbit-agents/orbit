@@ -18,6 +18,7 @@ use crate::agents::supervisor::SharedSupervisor;
 use crate::broker::SharedBroker;
 use crate::db::queries;
 use crate::git::SharedWorktreeManager;
+use crate::terminal::SharedTerminalRegistry;
 
 /// Everything IPC commands need to talk to the world.
 #[derive(Clone)]
@@ -27,6 +28,7 @@ pub struct AppState {
     pub supervisor: SharedSupervisor,
     pub broker: SharedBroker,
     pub worktrees: SharedWorktreeManager,
+    pub terminals: SharedTerminalRegistry,
     pub data_dir: PathBuf,
 }
 
@@ -51,6 +53,7 @@ fn parse_folder_access_for_rehydrate(raw: &str) -> Vec<PathBuf> {
 pub async fn rehydrate_agents(
     pool: &SqlitePool,
     engine: &dyn AgentEngine,
+    data_dir: &std::path::Path,
 ) -> Result<(), crate::db::DbError> {
     let agents = queries::list_agents(pool).await?;
     for agent in &agents {
@@ -111,6 +114,19 @@ pub async fn rehydrate_agents(
         .build();
 
         let add_dirs = parse_folder_access_for_rehydrate(&agent.folder_access);
+        // Phase 8: rehydrate respects whatever MCP config file the
+        // agent already has; rebuilding it here would mean racing the
+        // default-servers list at startup. The IPC `agent_spawn` path
+        // creates the file fresh, and any subsequent edits in the
+        // MCP UI prompt the user to respawn affected agents.
+        let mcp_config_path = {
+            let candidate = data_dir.join("mcp").join(format!("{}.json", agent.id));
+            if candidate.exists() {
+                Some(candidate)
+            } else {
+                None
+            }
+        };
         let cfg = SpawnConfig {
             agent_id: agent.id.clone(),
             working_dir,
@@ -118,6 +134,7 @@ pub async fn rehydrate_agents(
             resume_session_id: agent.session_id.clone(),
             system_prompt: Some(prompt),
             add_dirs,
+            mcp_config_path,
         };
         match engine.spawn(cfg).await {
             Ok(()) => {

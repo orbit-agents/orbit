@@ -15,6 +15,7 @@ pub mod core;
 pub mod db;
 pub mod git;
 pub mod ipc;
+pub mod terminal;
 
 use std::sync::Arc;
 
@@ -26,6 +27,7 @@ use crate::agents::supervisor::Supervisor;
 use crate::broker::Broker;
 use crate::core::AppState;
 use crate::git::WorktreeManager;
+use crate::terminal::TerminalRegistry;
 
 const DB_FILENAME: &str = "orbit.db";
 
@@ -72,6 +74,22 @@ pub fn run() {
             ipc::commands::sticky_note_update,
             ipc::commands::sticky_note_delete,
             ipc::commands::agent_get_activity_feed,
+            ipc::commands::group_thread_create,
+            ipc::commands::group_thread_list,
+            ipc::commands::group_thread_delete,
+            ipc::commands::group_thread_add_member,
+            ipc::commands::group_thread_remove_member,
+            ipc::commands::group_thread_list_members,
+            ipc::commands::group_thread_list_messages,
+            ipc::commands::group_thread_post_message,
+            ipc::commands::mcp_server_create,
+            ipc::commands::mcp_server_list,
+            ipc::commands::mcp_server_update,
+            ipc::commands::mcp_server_delete,
+            ipc::commands::terminal_open,
+            ipc::commands::terminal_write,
+            ipc::commands::terminal_resize,
+            ipc::commands::terminal_close,
             ipc::commands::system_reveal_path,
             ipc::commands::system_health_check,
         ])
@@ -95,14 +113,20 @@ pub fn run() {
             // <data-dir>/worktrees/<agent-id>. The directory is
             // created lazily by WorktreeManager.create.
             let worktrees = Arc::new(WorktreeManager::new(data_dir.join("worktrees")));
+            let terminals = Arc::new(TerminalRegistry::new());
 
             // Rehydrate persisted agents best-effort so users find their
             // conversations alive after a restart.
             let pool_for_rehydrate = pool.clone();
             let engine_for_rehydrate = Arc::clone(&engine);
+            let data_dir_for_rehydrate = data_dir.clone();
             tauri::async_runtime::spawn(async move {
-                if let Err(e) =
-                    core::rehydrate_agents(&pool_for_rehydrate, &*engine_for_rehydrate).await
+                if let Err(e) = core::rehydrate_agents(
+                    &pool_for_rehydrate,
+                    &*engine_for_rehydrate,
+                    &data_dir_for_rehydrate,
+                )
+                .await
                 {
                     tracing::error!(error = %e, "rehydration failed");
                 }
@@ -114,6 +138,7 @@ pub fn run() {
                 supervisor,
                 broker,
                 worktrees,
+                terminals,
                 data_dir: data_dir.clone(),
             };
             app.manage(state);

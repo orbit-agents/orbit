@@ -26,7 +26,7 @@ use crate::broker::TurnContext;
 use crate::db::models::{
     InterAgentMessage, InterAgentMessageStatus, MemorySource, MessageRole, TaskPriority, TaskStatus,
 };
-use crate::db::queries::{self, NewMemoryEntry, NewMessage, NewTask};
+use crate::db::queries::{self, NewGroupMessage, NewMemoryEntry, NewMessage, NewTask};
 use crate::ipc::events::{
     AgentAssistantMessagePersistedPayload, AgentEventPayload, AgentIdentityUpdatedPayload,
     AgentInterAgentMessageDispatchedPayload, AgentInterAgentMessageFailedPayload,
@@ -37,7 +37,7 @@ use crate::ipc::events::{
     EVENT_AGENT_TASK_CREATED, EVENT_AGENT_TASK_UPDATED,
 };
 
-/// Inputs that define a single turn. The two public entrypoints
+/// Inputs that define a single turn. The three public entrypoints
 /// persist the user-role message themselves, then call `run_turn`
 /// with the resulting metadata.
 struct TurnRequest {
@@ -55,6 +55,10 @@ struct TurnRequest {
     /// Originating inter-agent message; the runner marks this
     /// `acknowledged` (or `failed`) once the turn ends.
     originating_inter_agent_message_id: Option<String>,
+    /// Phase 8: when set, the recipient's TurnComplete posts the
+    /// cleaned assistant text back to the named group thread as an
+    /// agent-sourced group message.
+    originating_group_thread_id: Option<String>,
 }
 
 /// Public entry point for a human-initiated turn. Persists the
@@ -92,6 +96,56 @@ pub async fn run_user_turn(
             origin_human_message_id: Some(user_message_id),
             parent_depth: 0,
             originating_inter_agent_message_id: None,
+            originating_group_thread_id: None,
+        },
+    )
+    .await
+}
+
+/// Phase 8: public entry point for a group-thread post that fanned
+/// out to this agent. Persists a synthetic user-role message in the
+/// agent's conversation log with a `fromGroupId` annotation; on
+/// TurnComplete the assistant text is posted back to the group as an
+/// agent-sourced message.
+pub async fn run_group_turn(
+    ctx: TurnContext,
+    agent_id: String,
+    thread_id: String,
+    content: String,
+) -> Result<(), String> {
+    let conversation = queries::get_or_create_conversation_for_agent(&ctx.pool, &agent_id)
+        .await
+        .map_err(|e| format!("conversation resolve failed: {e}"))?;
+
+    let synthetic_message_id = uuid::Uuid::new_v4().to_string();
+    let user_content = serde_json::json!({
+        "text": content,
+        "fromGroupId": thread_id,
+    })
+    .to_string();
+    queries::insert_message(
+        &ctx.pool,
+        NewMessage {
+            id: &synthetic_message_id,
+            conversation_id: &conversation.id,
+            role: MessageRole::User,
+            content: &user_content,
+            created_at: Utc::now(),
+        },
+    )
+    .await
+    .map_err(|e| format!("synthetic group user message persist failed: {e}"))?;
+
+    run_turn(
+        ctx,
+        TurnRequest {
+            agent_id,
+            conversation_id: conversation.id,
+            user_text: content,
+            origin_human_message_id: None,
+            parent_depth: 0,
+            originating_inter_agent_message_id: None,
+            originating_group_thread_id: Some(thread_id),
         },
     )
     .await
@@ -138,6 +192,7 @@ pub async fn run_inbound_turn(
             origin_human_message_id: inbound.origin_human_message_id.clone(),
             parent_depth: inbound.depth,
             originating_inter_agent_message_id: Some(inbound.id),
+            originating_group_thread_id: None,
         },
     )
     .await
@@ -318,6 +373,42 @@ async fn run_turn(ctx: TurnContext, req: TurnRequest) -> Result<(), String> {
                         }
                         Err(e) => {
                             tracing::warn!(error = %e, "failed to persist assistant message");
+                        }
+                    }
+
+                    // Phase 8: when this turn was originated by a
+                    // group post, mirror the cleaned reply into the
+                    // group thread so the human and other members
+                    // see it.
+                    if let Some(thread_id) = &req.originating_group_thread_id {
+                        let gid = uuid::Uuid::new_v4().to_string();
+                        match queries::insert_group_message(
+                            &ctx.pool,
+                            NewGroupMessage {
+                                id: &gid,
+                                thread_id,
+                                sender_kind: "agent",
+                                sender_agent_id: Some(&agent.id),
+                                content: &extraction.cleaned_text,
+                            },
+                        )
+                        .await
+                        {
+                            Ok(group_msg) => {
+                                let _ = ctx.app.emit(
+                                    crate::ipc::events::EVENT_GROUP_MESSAGE_APPENDED,
+                                    crate::ipc::events::GroupMessageAppendedPayload {
+                                        message: group_msg,
+                                    },
+                                );
+                            }
+                            Err(e) => {
+                                tracing::warn!(
+                                    error = %e,
+                                    thread_id = thread_id,
+                                    "failed to mirror agent reply to group",
+                                );
+                            }
                         }
                     }
                 }

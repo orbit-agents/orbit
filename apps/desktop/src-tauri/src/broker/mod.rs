@@ -67,15 +67,18 @@ impl BrokerError {
     }
 }
 
-/// One queued turn for an agent. Both the human-facing
-/// `agent_send_message` command and the broker's `dispatch` path
-/// land on the same per-agent FIFO so concurrent human + broker
-/// activity to the same agent serializes cleanly instead of
-/// trampling on each other's `turn_sender` slot in the engine.
+/// One queued turn for an agent. Three sources land on the same
+/// per-agent FIFO so concurrent activity serializes cleanly instead
+/// of trampling on each other's `turn_sender` slot in the engine:
+///
+/// - `User`     — the human typed something into the agent's chat
+/// - `Inbound`  — another agent's `<send_to>` was routed here
+/// - `FromGroup`— a group-thread post fanned out to this member
 #[derive(Debug)]
 enum QueuedTurn {
     Inbound(InterAgentMessage),
     User { content: String },
+    FromGroup { thread_id: String, content: String },
 }
 
 #[derive(Default)]
@@ -242,6 +245,39 @@ impl Broker {
         }
     }
 
+    /// Phase 8: route a group-thread post to one member. Each member
+    /// of the thread gets one of these enqueues; the recipient's
+    /// turn handler annotates the synthetic user message with the
+    /// `thread_id` so its TurnComplete posts the reply back to the
+    /// group automatically.
+    pub async fn enqueue_group_turn(
+        self: &Arc<Self>,
+        ctx: TurnContext,
+        agent_id: AgentId,
+        thread_id: String,
+        content: String,
+    ) {
+        let inbox = self.inbox_for(&agent_id).await;
+        let need_to_spawn = {
+            let mut state = inbox.lock().await;
+            state
+                .queue
+                .push_back(QueuedTurn::FromGroup { thread_id, content });
+            if state.processing {
+                false
+            } else {
+                state.processing = true;
+                true
+            }
+        };
+        if need_to_spawn {
+            let broker = Arc::clone(self);
+            tokio::spawn(async move {
+                broker.drain_inbox(ctx, agent_id).await;
+            });
+        }
+    }
+
     /// Drain the recipient's inbox one message at a time. Each
     /// iteration pops, marks `delivered`, runs the recipient's turn
     /// (which marks `acknowledged` on `TurnComplete`), and loops.
@@ -297,6 +333,18 @@ impl Broker {
                             .await
                     {
                         tracing::warn!(error = %e, "user turn handler failed");
+                    }
+                }
+                QueuedTurn::FromGroup { thread_id, content } => {
+                    if let Err(e) = crate::agents::turn::run_group_turn(
+                        ctx.clone(),
+                        agent_id.clone(),
+                        thread_id,
+                        content,
+                    )
+                    .await
+                    {
+                        tracing::warn!(error = %e, "group turn handler failed");
                     }
                 }
             }

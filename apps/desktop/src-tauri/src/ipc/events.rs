@@ -8,7 +8,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::agents::engine::{AgentEvent, AgentId};
-use crate::db::models::{InterAgentMessage, MemoryEntry, Message, StickyNote, Task};
+use crate::db::models::{GroupMessage, InterAgentMessage, MemoryEntry, Message, StickyNote, Task};
 
 pub const EVENT_AGENT_EVENT: &str = "agent:event";
 pub const EVENT_AGENT_STATUS_CHANGE: &str = "agent:status_change";
@@ -39,6 +39,11 @@ pub const EVENT_AGENT_TASK_DELETED: &str = "agent:task_deleted";
 pub const EVENT_STICKY_NOTE_CREATED: &str = "sticky_note:created";
 pub const EVENT_STICKY_NOTE_UPDATED: &str = "sticky_note:updated";
 pub const EVENT_STICKY_NOTE_DELETED: &str = "sticky_note:deleted";
+/// Phase 8: a new message appeared in a group thread (either the
+/// human posted or an agent replied). Frontend appends it to the
+/// thread's transcript live.
+pub const EVENT_GROUP_MESSAGE_APPENDED: &str = "group:message_appended";
+pub const EVENT_GROUP_THREAD_UPDATED: &str = "group:thread_updated";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -119,6 +124,18 @@ pub struct StickyNoteUpdatedPayload {
 #[serde(rename_all = "camelCase")]
 pub struct StickyNoteDeletedPayload {
     pub note_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GroupMessageAppendedPayload {
+    pub message: GroupMessage,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GroupThreadUpdatedPayload {
+    pub thread_id: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -150,6 +150,12 @@ impl AgentEngine for ClaudeCodeEngine {
         for dir in &config.add_dirs {
             cmd.arg("--add-dir").arg(dir);
         }
+        // Phase 8: per-agent MCP server config. The file is generated
+        // by `commands::write_agent_mcp_config` from the user's
+        // configured default MCP servers.
+        if let Some(mcp_path) = &config.mcp_config_path {
+            cmd.arg("--mcp-config").arg(mcp_path);
+        }
 
         cmd.stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
@@ -568,6 +574,7 @@ printf '%s\n' '{"type":"result","subtype":"success","usage":{"input_tokens":1,"o
                 resume_session_id: None,
                 system_prompt: None,
                 add_dirs: vec![],
+                mcp_config_path: None,
             })
             .await
             .unwrap();

@@ -6,8 +6,9 @@ use chrono::{DateTime, Utc};
 use sqlx::SqlitePool;
 
 use super::models::{
-    Agent, Conversation, InterAgentMessage, InterAgentMessageStatus, MemoryEntry, MemorySource,
-    Message, MessageRole, StickyNote, Task, TaskPriority, TaskStatus, Team,
+    Agent, Conversation, GroupMessage, GroupThread, GroupThreadMember, InterAgentMessage,
+    InterAgentMessageStatus, McpServer, MemoryEntry, MemorySource, Message, MessageRole,
+    StickyNote, Task, TaskPriority, TaskStatus, Team,
 };
 use super::DbError;
 
@@ -479,6 +480,284 @@ pub async fn list_inter_agent_audit_log(
     .fetch_all(pool)
     .await?;
     Ok(rows)
+}
+
+// ─── Phase 8: group threads ───────────────────────────────────────────────
+
+pub struct NewGroupThread<'a> {
+    pub id: &'a str,
+    pub name: &'a str,
+    pub color: &'a str,
+}
+
+pub async fn insert_group_thread(
+    pool: &SqlitePool,
+    new: NewGroupThread<'_>,
+) -> Result<GroupThread, DbError> {
+    let now = Utc::now();
+    sqlx::query(
+        "INSERT INTO group_threads (id, name, color, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?)",
+    )
+    .bind(new.id)
+    .bind(new.name)
+    .bind(new.color)
+    .bind(now)
+    .bind(now)
+    .execute(pool)
+    .await?;
+    get_group_thread(pool, new.id)
+        .await?
+        .ok_or_else(|| DbError::Sqlx(sqlx::Error::RowNotFound))
+}
+
+pub async fn get_group_thread(pool: &SqlitePool, id: &str) -> Result<Option<GroupThread>, DbError> {
+    let row = sqlx::query_as::<_, GroupThread>("SELECT * FROM group_threads WHERE id = ?")
+        .bind(id)
+        .fetch_optional(pool)
+        .await?;
+    Ok(row)
+}
+
+pub async fn list_group_threads(pool: &SqlitePool) -> Result<Vec<GroupThread>, DbError> {
+    let rows =
+        sqlx::query_as::<_, GroupThread>("SELECT * FROM group_threads ORDER BY created_at ASC")
+            .fetch_all(pool)
+            .await?;
+    Ok(rows)
+}
+
+pub async fn delete_group_thread(pool: &SqlitePool, id: &str) -> Result<(), DbError> {
+    sqlx::query("DELETE FROM group_threads WHERE id = ?")
+        .bind(id)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+pub async fn add_group_member(
+    pool: &SqlitePool,
+    thread_id: &str,
+    agent_id: &str,
+) -> Result<(), DbError> {
+    sqlx::query(
+        "INSERT OR IGNORE INTO group_thread_members (thread_id, agent_id, added_at)
+         VALUES (?, ?, ?)",
+    )
+    .bind(thread_id)
+    .bind(agent_id)
+    .bind(Utc::now())
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+pub async fn remove_group_member(
+    pool: &SqlitePool,
+    thread_id: &str,
+    agent_id: &str,
+) -> Result<(), DbError> {
+    sqlx::query("DELETE FROM group_thread_members WHERE thread_id = ? AND agent_id = ?")
+        .bind(thread_id)
+        .bind(agent_id)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+pub async fn list_group_members(
+    pool: &SqlitePool,
+    thread_id: &str,
+) -> Result<Vec<GroupThreadMember>, DbError> {
+    let rows = sqlx::query_as::<_, GroupThreadMember>(
+        "SELECT * FROM group_thread_members WHERE thread_id = ? ORDER BY added_at ASC",
+    )
+    .bind(thread_id)
+    .fetch_all(pool)
+    .await?;
+    Ok(rows)
+}
+
+pub struct NewGroupMessage<'a> {
+    pub id: &'a str,
+    pub thread_id: &'a str,
+    pub sender_kind: &'a str,
+    pub sender_agent_id: Option<&'a str>,
+    pub content: &'a str,
+}
+
+pub async fn insert_group_message(
+    pool: &SqlitePool,
+    new: NewGroupMessage<'_>,
+) -> Result<GroupMessage, DbError> {
+    let now = Utc::now();
+    sqlx::query(
+        "INSERT INTO group_messages (id, thread_id, sender_kind, sender_agent_id, content, created_at)
+         VALUES (?, ?, ?, ?, ?, ?)",
+    )
+    .bind(new.id)
+    .bind(new.thread_id)
+    .bind(new.sender_kind)
+    .bind(new.sender_agent_id)
+    .bind(new.content)
+    .bind(now)
+    .execute(pool)
+    .await?;
+    Ok(GroupMessage {
+        id: new.id.to_string(),
+        thread_id: new.thread_id.to_string(),
+        sender_kind: new.sender_kind.to_string(),
+        sender_agent_id: new.sender_agent_id.map(|s| s.to_string()),
+        content: new.content.to_string(),
+        created_at: now,
+    })
+}
+
+pub async fn list_group_messages(
+    pool: &SqlitePool,
+    thread_id: &str,
+    limit: i64,
+) -> Result<Vec<GroupMessage>, DbError> {
+    let rows = sqlx::query_as::<_, GroupMessage>(
+        "SELECT * FROM group_messages
+         WHERE thread_id = ?
+         ORDER BY created_at ASC
+         LIMIT ?",
+    )
+    .bind(thread_id)
+    .bind(limit)
+    .fetch_all(pool)
+    .await?;
+    Ok(rows)
+}
+
+// ─── Phase 8: MCP servers ─────────────────────────────────────────────────
+
+pub struct NewMcpServer<'a> {
+    pub id: &'a str,
+    pub name: &'a str,
+    pub transport: &'a str,
+    pub command: Option<&'a str>,
+    pub args_json: &'a str,
+    pub env_json: &'a str,
+    pub url: Option<&'a str>,
+    pub is_default: bool,
+}
+
+pub async fn insert_mcp_server(
+    pool: &SqlitePool,
+    new: NewMcpServer<'_>,
+) -> Result<McpServer, DbError> {
+    let now = Utc::now();
+    sqlx::query(
+        "INSERT INTO mcp_servers
+            (id, name, transport, command, args_json, env_json, url,
+             is_default, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    )
+    .bind(new.id)
+    .bind(new.name)
+    .bind(new.transport)
+    .bind(new.command)
+    .bind(new.args_json)
+    .bind(new.env_json)
+    .bind(new.url)
+    .bind(if new.is_default { 1_i64 } else { 0_i64 })
+    .bind(now)
+    .bind(now)
+    .execute(pool)
+    .await?;
+    get_mcp_server(pool, new.id)
+        .await?
+        .ok_or_else(|| DbError::Sqlx(sqlx::Error::RowNotFound))
+}
+
+pub async fn get_mcp_server(pool: &SqlitePool, id: &str) -> Result<Option<McpServer>, DbError> {
+    let row = sqlx::query_as::<_, McpServer>("SELECT * FROM mcp_servers WHERE id = ?")
+        .bind(id)
+        .fetch_optional(pool)
+        .await?;
+    Ok(row)
+}
+
+pub async fn list_mcp_servers(pool: &SqlitePool) -> Result<Vec<McpServer>, DbError> {
+    let rows = sqlx::query_as::<_, McpServer>("SELECT * FROM mcp_servers ORDER BY name ASC")
+        .fetch_all(pool)
+        .await?;
+    Ok(rows)
+}
+
+pub async fn list_default_mcp_servers(pool: &SqlitePool) -> Result<Vec<McpServer>, DbError> {
+    let rows = sqlx::query_as::<_, McpServer>(
+        "SELECT * FROM mcp_servers WHERE is_default = 1 ORDER BY name ASC",
+    )
+    .fetch_all(pool)
+    .await?;
+    Ok(rows)
+}
+
+/// Updatable fields on an `McpServer`. Each `Option` left `None`
+/// keeps the existing value. Bundled into a struct so the function
+/// signature stays small as MCP gains more knobs.
+#[derive(Debug, Default)]
+pub struct McpServerUpdate<'a> {
+    pub name: Option<&'a str>,
+    pub transport: Option<&'a str>,
+    pub command: Option<&'a str>,
+    pub args_json: Option<&'a str>,
+    pub env_json: Option<&'a str>,
+    pub url: Option<&'a str>,
+    pub is_default: Option<bool>,
+}
+
+pub async fn update_mcp_server(
+    pool: &SqlitePool,
+    id: &str,
+    update: McpServerUpdate<'_>,
+) -> Result<McpServer, DbError> {
+    let McpServerUpdate {
+        name,
+        transport,
+        command,
+        args_json,
+        env_json,
+        url,
+        is_default,
+    } = update;
+    let now = Utc::now();
+    let bumps: Vec<(&str, String)> = [
+        name.map(|v| ("name", v.to_string())),
+        transport.map(|v| ("transport", v.to_string())),
+        command.map(|v| ("command", v.to_string())),
+        args_json.map(|v| ("args_json", v.to_string())),
+        env_json.map(|v| ("env_json", v.to_string())),
+        url.map(|v| ("url", v.to_string())),
+        is_default.map(|v| ("is_default", if v { "1" } else { "0" }.to_string())),
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
+
+    for (col, val) in bumps {
+        let sql = format!("UPDATE mcp_servers SET {col} = ?, updated_at = ? WHERE id = ?");
+        sqlx::query(&sql)
+            .bind(val)
+            .bind(now)
+            .bind(id)
+            .execute(pool)
+            .await?;
+    }
+    get_mcp_server(pool, id)
+        .await?
+        .ok_or_else(|| DbError::Sqlx(sqlx::Error::RowNotFound))
+}
+
+pub async fn delete_mcp_server(pool: &SqlitePool, id: &str) -> Result<(), DbError> {
+    sqlx::query("DELETE FROM mcp_servers WHERE id = ?")
+        .bind(id)
+        .execute(pool)
+        .await?;
+    Ok(())
 }
 
 // ─── Phase 7: tasks ───────────────────────────────────────────────────────
@@ -1491,6 +1770,175 @@ mod tests {
 
         delete_sticky_note(&pool, "s1").await.unwrap();
         assert!(get_sticky_note(&pool, "s1").await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn group_thread_lifecycle_create_add_member_post_list_delete() {
+        let pool = memory_pool().await;
+        insert_test_agent(&pool, "a").await;
+        insert_test_agent(&pool, "b").await;
+
+        let thread = insert_group_thread(
+            &pool,
+            NewGroupThread {
+                id: "g1",
+                name: "deploy-pipeline",
+                color: "#3a4a3e",
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(thread.name, "deploy-pipeline");
+
+        add_group_member(&pool, "g1", "a").await.unwrap();
+        add_group_member(&pool, "g1", "b").await.unwrap();
+        // Idempotent on duplicate.
+        add_group_member(&pool, "g1", "a").await.unwrap();
+
+        let members = list_group_members(&pool, "g1").await.unwrap();
+        assert_eq!(members.len(), 2);
+
+        insert_group_message(
+            &pool,
+            NewGroupMessage {
+                id: "m1",
+                thread_id: "g1",
+                sender_kind: "human",
+                sender_agent_id: None,
+                content: "kick off the migration",
+            },
+        )
+        .await
+        .unwrap();
+        insert_group_message(
+            &pool,
+            NewGroupMessage {
+                id: "m2",
+                thread_id: "g1",
+                sender_kind: "agent",
+                sender_agent_id: Some("a"),
+                content: "on it",
+            },
+        )
+        .await
+        .unwrap();
+
+        let msgs = list_group_messages(&pool, "g1", 100).await.unwrap();
+        assert_eq!(msgs.len(), 2);
+        assert_eq!(msgs[0].id, "m1");
+        assert_eq!(msgs[1].sender_kind, "agent");
+
+        // Removing a member doesn't delete past messages.
+        remove_group_member(&pool, "g1", "a").await.unwrap();
+        assert_eq!(list_group_members(&pool, "g1").await.unwrap().len(), 1);
+        assert_eq!(
+            list_group_messages(&pool, "g1", 100).await.unwrap().len(),
+            2
+        );
+
+        delete_group_thread(&pool, "g1").await.unwrap();
+        assert!(get_group_thread(&pool, "g1").await.unwrap().is_none());
+        // Cascade: members + messages gone.
+        assert!(list_group_members(&pool, "g1").await.unwrap().is_empty());
+        assert!(list_group_messages(&pool, "g1", 100)
+            .await
+            .unwrap()
+            .is_empty());
+    }
+
+    #[tokio::test]
+    async fn deleting_agent_cascades_group_membership_but_not_message_history() {
+        let pool = memory_pool().await;
+        insert_test_agent(&pool, "a").await;
+        insert_group_thread(
+            &pool,
+            NewGroupThread {
+                id: "g1",
+                name: "g",
+                color: "#000",
+            },
+        )
+        .await
+        .unwrap();
+        add_group_member(&pool, "g1", "a").await.unwrap();
+        insert_group_message(
+            &pool,
+            NewGroupMessage {
+                id: "m1",
+                thread_id: "g1",
+                sender_kind: "agent",
+                sender_agent_id: Some("a"),
+                content: "hi",
+            },
+        )
+        .await
+        .unwrap();
+
+        delete_agent(&pool, "a").await.unwrap();
+        // Membership row gone (cascade).
+        assert!(list_group_members(&pool, "g1").await.unwrap().is_empty());
+        // But the message stays for replay; sender_agent_id null'd by FK.
+        let msgs = list_group_messages(&pool, "g1", 100).await.unwrap();
+        assert_eq!(msgs.len(), 1);
+        assert!(msgs[0].sender_agent_id.is_none());
+    }
+
+    #[tokio::test]
+    async fn mcp_server_lifecycle_with_defaults() {
+        let pool = memory_pool().await;
+        let stdio = insert_mcp_server(
+            &pool,
+            NewMcpServer {
+                id: "s1",
+                name: "filesystem",
+                transport: "stdio",
+                command: Some("npx"),
+                args_json: "[\"-y\",\"@modelcontextprotocol/server-filesystem\",\"/home/me\"]",
+                env_json: "{}",
+                url: None,
+                is_default: true,
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(stdio.transport, "stdio");
+        assert_eq!(stdio.is_default, 1);
+
+        insert_mcp_server(
+            &pool,
+            NewMcpServer {
+                id: "s2",
+                name: "github",
+                transport: "http",
+                command: None,
+                args_json: "[]",
+                env_json: "{}",
+                url: Some("http://localhost:9090/mcp"),
+                is_default: false,
+            },
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(list_mcp_servers(&pool).await.unwrap().len(), 2);
+        let defaults = list_default_mcp_servers(&pool).await.unwrap();
+        assert_eq!(defaults.len(), 1);
+        assert_eq!(defaults[0].name, "filesystem");
+
+        update_mcp_server(
+            &pool,
+            "s2",
+            McpServerUpdate {
+                is_default: Some(true),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(list_default_mcp_servers(&pool).await.unwrap().len(), 2);
+
+        delete_mcp_server(&pool, "s1").await.unwrap();
+        assert_eq!(list_mcp_servers(&pool).await.unwrap().len(), 1);
     }
 
     #[tokio::test]

@@ -17,6 +17,9 @@ pub type InterAgentMessageId = String;
 pub type TeamId = String;
 pub type TaskId = String;
 pub type StickyNoteId = String;
+pub type GroupThreadId = String;
+pub type GroupMessageId = String;
+pub type McpServerId = String;
 
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
 #[serde(rename_all = "camelCase")]
@@ -204,6 +207,61 @@ pub struct StickyNote {
     pub position_x: f64,
     pub position_y: f64,
     pub color: String,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+/// Phase 8: group thread (multiple agents + the human in one
+/// conversation). The human is implicit — never a row in
+/// `group_thread_members`.
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+#[serde(rename_all = "camelCase")]
+pub struct GroupThread {
+    pub id: GroupThreadId,
+    pub name: String,
+    pub color: String,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+#[serde(rename_all = "camelCase")]
+pub struct GroupThreadMember {
+    pub thread_id: GroupThreadId,
+    pub agent_id: AgentId,
+    pub added_at: DateTime<Utc>,
+}
+
+/// Phase 8: one message in a group thread. `sender_kind = 'human'`
+/// rows have `sender_agent_id = NULL`; agent posts carry the agent id
+/// so the renderer can show emoji/name attribution.
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+#[serde(rename_all = "camelCase")]
+pub struct GroupMessage {
+    pub id: GroupMessageId,
+    pub thread_id: GroupThreadId,
+    pub sender_kind: String,
+    pub sender_agent_id: Option<AgentId>,
+    pub content: String,
+    pub created_at: DateTime<Utc>,
+}
+
+/// Phase 8: external MCP server the user has registered. Passed to
+/// Claude Code subprocesses via `--mcp-config <file>` so agents can
+/// use third-party tools.
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+#[serde(rename_all = "camelCase")]
+pub struct McpServer {
+    pub id: McpServerId,
+    pub name: String,
+    /// `'stdio' | 'http'` — kept as string on the wire so a future
+    /// transport doesn't break older databases.
+    pub transport: String,
+    pub command: Option<String>,
+    pub args_json: String,
+    pub env_json: String,
+    pub url: Option<String>,
+    pub is_default: i64,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }

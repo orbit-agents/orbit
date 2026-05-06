@@ -36,6 +36,10 @@ pub struct SpawnConfig {
     /// default).
     #[serde(default)]
     pub add_dirs: Vec<PathBuf>,
+    /// Phase 8: path to a per-agent `--mcp-config` JSON file. `None`
+    /// means no MCP servers are configured for this agent.
+    #[serde(default)]
+    pub mcp_config_path: Option<PathBuf>,
 }
 
 /// Token usage reported at the end of a turn.

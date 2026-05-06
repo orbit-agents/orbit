@@ -148,9 +148,26 @@ Per-agent task lists. Activity feed (= status reports as a derived chronological
 10. **Marker discussion safety.** Ask the agent "what's the syntax of the task tool?" — its reply mentions `<task action="...">` mid-prose; verify no spurious task is created.
 11. **Cross-platform.** Same flow on macOS, Windows, and Linux.
 
-## Phase 8 — Group conversations + terminal + MCP · _Planned_
+## Phase 8 — Group conversations + terminal + MCP · _Complete_
 
-Group threads (multiple agents + human). xterm.js terminal tab for ad-hoc shell work. MCP server support so agents can use third-party tools.
+Group threads (multi-agent + human, posted via the broker). xterm.js terminal tab on the right panel bound to a per-agent PTY. MCP server registry — configured servers get passed to Claude Code at spawn via `--mcp-config`. Pseudo-tool → MCP migration deferred per ADR 0010.
+
+**Deliverable:** create a "deploy-pipeline" group, add three agents, post a message — each agent's reply mirrors back into the thread. Open the Terminal tab on an agent and run `git status` in its worktree without leaving Orbit. Register a filesystem MCP server in Settings; respawn an agent and watch it get the new tool.
+
+### Manual test checklist
+
+1. **Create a group.** Sidebar → Group chats → `+`, type "deploy-pipeline", press Enter. The group view opens; member strip is empty.
+2. **Add members.** Click "Add" on the member strip, pick agent A and agent B in turn. Both appear as chips with avatar + name.
+3. **Post and fan out.** Type "kick off the migration" in the composer, Cmd/Ctrl+Enter. The message appears immediately. Within a few seconds each member's reply appears in the thread, attributed with the agent's emoji + name.
+4. **Restart persistence.** Quit, reopen. The group + members + messages are intact. Each member's individual chat history shows the synthetic user turn from the group post.
+5. **Remove a member.** Click × next to one member. Subsequent group posts only fan out to the remaining members.
+6. **Delete a group.** Trash icon in the header → confirm. The group disappears from the sidebar and the center pane returns to the canvas.
+7. **Terminal tab opens a shell.** Select an agent. Click the Terminal tab. A blank xterm.js pane opens; type `pwd` + Enter — it prints the agent's working dir (the worktree path if Phase 6 is in play).
+8. **Terminal resize.** Resize the right panel — xterm.js reflows; the PTY grid syncs.
+9. **Terminal teardown.** Switch to another tab → Terminal closes. Switch back → fresh shell.
+10. **MCP server CRUD.** Sidebar → Workspace → MCP. Click "Add server", fill in `name=filesystem`, `transport=stdio`, `command=npx`, args + env, default = on. Save. Row appears with a default badge. Toggle the checkbox to disable; toggle back. Delete via the trash icon.
+11. **MCP config materialization.** Spawn a new agent. Inspect `<orbit-data-dir>/mcp/<agent-id>.json` — it should contain the default servers under `mcpServers`. The Claude Code subprocess is launched with `--mcp-config <path>`.
+12. **Cross-platform.** Same flow on macOS, Windows, and Linux. PTY uses portable-pty (cross-platform); xterm.js works in any webview.
 
 ## Beyond Phase 8
 

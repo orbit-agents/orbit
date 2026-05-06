@@ -16,22 +16,24 @@ use crate::agents::prompt_builder::{
 use crate::broker::TurnContext;
 use crate::core::AppState;
 use crate::db::models::{
-    Agent, InterAgentMessage, MemoryEntry, MemorySource, Message, StickyNote, Task, TaskPriority,
-    TaskStatus, Team,
+    Agent, GroupMessage, GroupThread, GroupThreadMember, InterAgentMessage, McpServer, MemoryEntry,
+    MemorySource, Message, StickyNote, Task, TaskPriority, TaskStatus, Team,
 };
 use crate::db::queries::{
-    self, NewAgent, NewMemoryEntry, NewStickyNote, NewTask, NewTeam, WorktreeRecord,
+    self, McpServerUpdate, NewAgent, NewGroupMessage, NewGroupThread, NewMcpServer, NewMemoryEntry,
+    NewStickyNote, NewTask, NewTeam, WorktreeRecord,
 };
 use crate::git::{FileDiff, WorktreeManager};
 
 use super::events::{
     AgentIdentityUpdatedPayload, AgentMemoryAddedPayload, AgentStatusChangePayload,
     AgentTaskCreatedPayload, AgentTaskDeletedPayload, AgentTaskUpdatedPayload,
-    AgentTerminatedPayload, StickyNoteCreatedPayload, StickyNoteDeletedPayload,
-    StickyNoteUpdatedPayload, EVENT_AGENT_IDENTITY_UPDATED, EVENT_AGENT_MEMORY_ADDED,
-    EVENT_AGENT_STATUS_CHANGE, EVENT_AGENT_TASK_CREATED, EVENT_AGENT_TASK_DELETED,
-    EVENT_AGENT_TASK_UPDATED, EVENT_AGENT_TERMINATED, EVENT_STICKY_NOTE_CREATED,
-    EVENT_STICKY_NOTE_DELETED, EVENT_STICKY_NOTE_UPDATED,
+    AgentTerminatedPayload, GroupMessageAppendedPayload, GroupThreadUpdatedPayload,
+    StickyNoteCreatedPayload, StickyNoteDeletedPayload, StickyNoteUpdatedPayload,
+    EVENT_AGENT_IDENTITY_UPDATED, EVENT_AGENT_MEMORY_ADDED, EVENT_AGENT_STATUS_CHANGE,
+    EVENT_AGENT_TASK_CREATED, EVENT_AGENT_TASK_DELETED, EVENT_AGENT_TASK_UPDATED,
+    EVENT_AGENT_TERMINATED, EVENT_GROUP_MESSAGE_APPENDED, EVENT_GROUP_THREAD_UPDATED,
+    EVENT_STICKY_NOTE_CREATED, EVENT_STICKY_NOTE_DELETED, EVENT_STICKY_NOTE_UPDATED,
 };
 
 /// User-facing command error type. Anything that reaches the frontend is
@@ -286,6 +288,10 @@ pub async fn agent_spawn(
     // reflects the right value.
     let engine_working_dir = std::path::PathBuf::from(&agent.working_dir);
 
+    // Phase 8: materialize the agent's MCP config from default
+    // servers and pass it to Claude Code via --mcp-config.
+    let mcp_config_path = write_agent_mcp_config(&state, &id).await.unwrap_or(None);
+
     state
         .engine
         .spawn(SpawnConfig {
@@ -295,6 +301,7 @@ pub async fn agent_spawn(
             resume_session_id: None,
             system_prompt: Some(system_prompt),
             add_dirs,
+            mcp_config_path,
         })
         .await
         .map_err(|e| {
@@ -1195,6 +1202,392 @@ pub async fn agent_get_activity_feed(
     entries.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
     entries.truncate(cap as usize);
     Ok(entries)
+}
+
+// ─── Phase 8: group threads ───────────────────────────────────────────────
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateGroupThreadInput {
+    pub name: String,
+    pub color: String,
+}
+
+#[tauri::command]
+pub async fn group_thread_create(
+    state: State<'_, AppState>,
+    app: AppHandle,
+    input: CreateGroupThreadInput,
+) -> CommandResult<GroupThread> {
+    if input.name.trim().is_empty() {
+        return Err("Group name cannot be empty.".to_string());
+    }
+    let id = uuid::Uuid::new_v4().to_string();
+    let thread = queries::insert_group_thread(
+        &state.pool,
+        NewGroupThread {
+            id: &id,
+            name: input.name.trim(),
+            color: &input.color,
+        },
+    )
+    .await
+    .map_err(|e| err("Failed to create group thread", e))?;
+    let _ = app.emit(
+        EVENT_GROUP_THREAD_UPDATED,
+        GroupThreadUpdatedPayload {
+            thread_id: thread.id.clone(),
+        },
+    );
+    Ok(thread)
+}
+
+#[tauri::command]
+pub async fn group_thread_list(state: State<'_, AppState>) -> CommandResult<Vec<GroupThread>> {
+    queries::list_group_threads(&state.pool)
+        .await
+        .map_err(|e| err("Failed to list group threads", e))
+}
+
+#[tauri::command]
+pub async fn group_thread_delete(
+    state: State<'_, AppState>,
+    app: AppHandle,
+    thread_id: String,
+) -> CommandResult<()> {
+    queries::delete_group_thread(&state.pool, &thread_id)
+        .await
+        .map_err(|e| err("Failed to delete group thread", e))?;
+    let _ = app.emit(
+        EVENT_GROUP_THREAD_UPDATED,
+        GroupThreadUpdatedPayload {
+            thread_id: thread_id.clone(),
+        },
+    );
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn group_thread_add_member(
+    state: State<'_, AppState>,
+    app: AppHandle,
+    thread_id: String,
+    agent_id: AgentId,
+) -> CommandResult<()> {
+    queries::add_group_member(&state.pool, &thread_id, &agent_id)
+        .await
+        .map_err(|e| err("Failed to add member", e))?;
+    let _ = app.emit(
+        EVENT_GROUP_THREAD_UPDATED,
+        GroupThreadUpdatedPayload { thread_id },
+    );
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn group_thread_remove_member(
+    state: State<'_, AppState>,
+    app: AppHandle,
+    thread_id: String,
+    agent_id: AgentId,
+) -> CommandResult<()> {
+    queries::remove_group_member(&state.pool, &thread_id, &agent_id)
+        .await
+        .map_err(|e| err("Failed to remove member", e))?;
+    let _ = app.emit(
+        EVENT_GROUP_THREAD_UPDATED,
+        GroupThreadUpdatedPayload { thread_id },
+    );
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn group_thread_list_members(
+    state: State<'_, AppState>,
+    thread_id: String,
+) -> CommandResult<Vec<GroupThreadMember>> {
+    queries::list_group_members(&state.pool, &thread_id)
+        .await
+        .map_err(|e| err("Failed to load members", e))
+}
+
+#[tauri::command]
+pub async fn group_thread_list_messages(
+    state: State<'_, AppState>,
+    thread_id: String,
+    limit: Option<i64>,
+) -> CommandResult<Vec<GroupMessage>> {
+    queries::list_group_messages(&state.pool, &thread_id, limit.unwrap_or(500))
+        .await
+        .map_err(|e| err("Failed to load group messages", e))
+}
+
+/// Phase 8: human posts to a group thread. Persists the human
+/// message + emits the event, then fans the message out to every
+/// member via `broker.enqueue_group_turn`. Each member's
+/// `run_group_turn` annotates the synthetic user message with the
+/// thread id; on TurnComplete the agent's reply mirrors back into
+/// the group automatically.
+#[tauri::command]
+pub async fn group_thread_post_message(
+    state: State<'_, AppState>,
+    app: AppHandle,
+    thread_id: String,
+    content: String,
+) -> CommandResult<GroupMessage> {
+    if content.trim().is_empty() {
+        return Err("Cannot post an empty message.".to_string());
+    }
+    let id = uuid::Uuid::new_v4().to_string();
+    let message = queries::insert_group_message(
+        &state.pool,
+        NewGroupMessage {
+            id: &id,
+            thread_id: &thread_id,
+            sender_kind: "human",
+            sender_agent_id: None,
+            content: content.trim(),
+        },
+    )
+    .await
+    .map_err(|e| err("Failed to persist group message", e))?;
+    let _ = app.emit(
+        EVENT_GROUP_MESSAGE_APPENDED,
+        GroupMessageAppendedPayload {
+            message: message.clone(),
+        },
+    );
+
+    // Fan out to every member.
+    let members = queries::list_group_members(&state.pool, &thread_id)
+        .await
+        .map_err(|e| err("Failed to load members for fan-out", e))?;
+    let ctx = TurnContext {
+        pool: state.pool.clone(),
+        engine: state.engine.clone(),
+        supervisor: state.supervisor.clone(),
+        app: app.clone(),
+        broker: state.broker.clone(),
+    };
+    for m in members {
+        state
+            .broker
+            .enqueue_group_turn(ctx.clone(), m.agent_id, thread_id.clone(), content.clone())
+            .await;
+    }
+    Ok(message)
+}
+
+// ─── Phase 8: MCP servers ─────────────────────────────────────────────────
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateMcpServerInput {
+    pub name: String,
+    pub transport: String,
+    #[serde(default)]
+    pub command: Option<String>,
+    #[serde(default)]
+    pub args: Vec<String>,
+    #[serde(default)]
+    pub env: std::collections::HashMap<String, String>,
+    #[serde(default)]
+    pub url: Option<String>,
+    #[serde(default)]
+    pub is_default: bool,
+}
+
+#[tauri::command]
+pub async fn mcp_server_create(
+    state: State<'_, AppState>,
+    input: CreateMcpServerInput,
+) -> CommandResult<McpServer> {
+    if input.name.trim().is_empty() {
+        return Err("MCP server name cannot be empty.".to_string());
+    }
+    if !matches!(input.transport.as_str(), "stdio" | "http") {
+        return Err("MCP server transport must be 'stdio' or 'http'.".to_string());
+    }
+    let id = uuid::Uuid::new_v4().to_string();
+    let args_json =
+        serde_json::to_string(&input.args).map_err(|e| err("Failed to serialise args", e))?;
+    let env_json =
+        serde_json::to_string(&input.env).map_err(|e| err("Failed to serialise env", e))?;
+    queries::insert_mcp_server(
+        &state.pool,
+        NewMcpServer {
+            id: &id,
+            name: input.name.trim(),
+            transport: &input.transport,
+            command: input.command.as_deref(),
+            args_json: &args_json,
+            env_json: &env_json,
+            url: input.url.as_deref(),
+            is_default: input.is_default,
+        },
+    )
+    .await
+    .map_err(|e| err("Failed to create MCP server", e))
+}
+
+#[tauri::command]
+pub async fn mcp_server_list(state: State<'_, AppState>) -> CommandResult<Vec<McpServer>> {
+    queries::list_mcp_servers(&state.pool)
+        .await
+        .map_err(|e| err("Failed to list MCP servers", e))
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateMcpServerInput {
+    pub server_id: String,
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default)]
+    pub transport: Option<String>,
+    #[serde(default)]
+    pub command: Option<String>,
+    #[serde(default)]
+    pub args: Option<Vec<String>>,
+    #[serde(default)]
+    pub env: Option<std::collections::HashMap<String, String>>,
+    #[serde(default)]
+    pub url: Option<String>,
+    #[serde(default)]
+    pub is_default: Option<bool>,
+}
+
+#[tauri::command]
+pub async fn mcp_server_update(
+    state: State<'_, AppState>,
+    input: UpdateMcpServerInput,
+) -> CommandResult<McpServer> {
+    let args_json = match &input.args {
+        Some(v) => Some(serde_json::to_string(v).map_err(|e| err("Failed to serialise args", e))?),
+        None => None,
+    };
+    let env_json = match &input.env {
+        Some(v) => Some(serde_json::to_string(v).map_err(|e| err("Failed to serialise env", e))?),
+        None => None,
+    };
+    queries::update_mcp_server(
+        &state.pool,
+        &input.server_id,
+        McpServerUpdate {
+            name: input.name.as_deref(),
+            transport: input.transport.as_deref(),
+            command: input.command.as_deref(),
+            args_json: args_json.as_deref(),
+            env_json: env_json.as_deref(),
+            url: input.url.as_deref(),
+            is_default: input.is_default,
+        },
+    )
+    .await
+    .map_err(|e| err("Failed to update MCP server", e))
+}
+
+#[tauri::command]
+pub async fn mcp_server_delete(state: State<'_, AppState>, server_id: String) -> CommandResult<()> {
+    queries::delete_mcp_server(&state.pool, &server_id)
+        .await
+        .map_err(|e| err("Failed to delete MCP server", e))
+}
+
+/// Phase 8: write a per-agent MCP config file under
+/// `<data-dir>/mcp/<agent-id>.json`. Returns the absolute path so
+/// `agent_spawn` can pass it as `--mcp-config`. Writes nothing and
+/// returns `None` if no default servers are configured.
+async fn write_agent_mcp_config(
+    state: &AppState,
+    agent_id: &str,
+) -> Result<Option<PathBuf>, String> {
+    let servers = queries::list_default_mcp_servers(&state.pool)
+        .await
+        .map_err(|e| err("Failed to load default MCP servers", e))?;
+    if servers.is_empty() {
+        return Ok(None);
+    }
+    let mut entries: serde_json::Map<String, serde_json::Value> = serde_json::Map::new();
+    for s in servers {
+        let mut entry = serde_json::Map::new();
+        entry.insert(
+            "type".into(),
+            serde_json::Value::String(s.transport.clone()),
+        );
+        if s.transport == "stdio" {
+            if let Some(cmd) = &s.command {
+                entry.insert("command".into(), serde_json::Value::String(cmd.clone()));
+            }
+            let args: serde_json::Value =
+                serde_json::from_str(&s.args_json).unwrap_or(serde_json::Value::Array(vec![]));
+            entry.insert("args".into(), args);
+            let env: serde_json::Value = serde_json::from_str(&s.env_json)
+                .unwrap_or(serde_json::Value::Object(Default::default()));
+            entry.insert("env".into(), env);
+        } else if s.transport == "http" {
+            if let Some(url) = &s.url {
+                entry.insert("url".into(), serde_json::Value::String(url.clone()));
+            }
+        }
+        entries.insert(s.name.clone(), serde_json::Value::Object(entry));
+    }
+    let mut root = serde_json::Map::new();
+    root.insert("mcpServers".to_string(), serde_json::Value::Object(entries));
+    let dir = state.data_dir.join("mcp");
+    tokio::fs::create_dir_all(&dir)
+        .await
+        .map_err(|e| err("Failed to create mcp config dir", e))?;
+    let path = dir.join(format!("{agent_id}.json"));
+    tokio::fs::write(
+        &path,
+        serde_json::to_vec_pretty(&serde_json::Value::Object(root))
+            .map_err(|e| err("Failed to serialise mcp config", e))?,
+    )
+    .await
+    .map_err(|e| err("Failed to write mcp config", e))?;
+    Ok(Some(path))
+}
+
+// ─── Phase 8: per-agent terminal ──────────────────────────────────────────
+
+#[tauri::command]
+pub async fn terminal_open(
+    state: State<'_, AppState>,
+    app: AppHandle,
+    agent_id: AgentId,
+) -> CommandResult<()> {
+    let agent = queries::get_agent(&state.pool, &agent_id)
+        .await
+        .map_err(|e| err("Failed to look up agent", e))?
+        .ok_or_else(|| format!("Agent {agent_id} not found."))?;
+    let working_dir = PathBuf::from(&agent.working_dir);
+    state.terminals.open(app, agent_id, working_dir).await
+}
+
+#[tauri::command]
+pub async fn terminal_write(
+    state: State<'_, AppState>,
+    agent_id: AgentId,
+    data: String,
+) -> CommandResult<()> {
+    state.terminals.write(&agent_id, &data).await
+}
+
+#[tauri::command]
+pub async fn terminal_resize(
+    state: State<'_, AppState>,
+    agent_id: AgentId,
+    rows: u16,
+    cols: u16,
+) -> CommandResult<()> {
+    state.terminals.resize(&agent_id, rows, cols).await
+}
+
+#[tauri::command]
+pub async fn terminal_close(state: State<'_, AppState>, agent_id: AgentId) -> CommandResult<()> {
+    state.terminals.close(&agent_id).await;
+    Ok(())
 }
 
 /// Phase 6: open the platform's file manager at the given path.
