@@ -8,7 +8,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::agents::engine::{AgentEvent, AgentId};
-use crate::db::models::{InterAgentMessage, MemoryEntry, Message};
+use crate::db::models::{InterAgentMessage, MemoryEntry, Message, StickyNote, Task};
 
 pub const EVENT_AGENT_EVENT: &str = "agent:event";
 pub const EVENT_AGENT_STATUS_CHANGE: &str = "agent:status_change";
@@ -28,6 +28,17 @@ pub const EVENT_AGENT_INTER_AGENT_MESSAGE_DISPATCHED: &str = "agent:inter_agent_
 /// unknown recipient, etc.). The sender's UI surfaces this as a
 /// soft warning.
 pub const EVENT_AGENT_INTER_AGENT_MESSAGE_FAILED: &str = "agent:inter_agent_message_failed";
+/// Phase 7: a task was created (by an agent or human).
+pub const EVENT_AGENT_TASK_CREATED: &str = "agent:task_created";
+/// Phase 7: a task's state changed.
+pub const EVENT_AGENT_TASK_UPDATED: &str = "agent:task_updated";
+/// Phase 7: a task was deleted.
+pub const EVENT_AGENT_TASK_DELETED: &str = "agent:task_deleted";
+/// Phase 7: sticky-note CRUD events. Sticky notes are human-only;
+/// agents never see these.
+pub const EVENT_STICKY_NOTE_CREATED: &str = "sticky_note:created";
+pub const EVENT_STICKY_NOTE_UPDATED: &str = "sticky_note:updated";
+pub const EVENT_STICKY_NOTE_DELETED: &str = "sticky_note:deleted";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -71,6 +82,43 @@ pub struct AgentIdentityUpdatedPayload {
 pub struct AgentAssistantMessagePersistedPayload {
     pub agent_id: AgentId,
     pub message: Message,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentTaskCreatedPayload {
+    pub task: Task,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentTaskUpdatedPayload {
+    pub task: Task,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentTaskDeletedPayload {
+    pub task_id: String,
+    pub agent_id: AgentId,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StickyNoteCreatedPayload {
+    pub note: StickyNote,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StickyNoteUpdatedPayload {
+    pub note: StickyNote,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StickyNoteDeletedPayload {
+    pub note_id: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

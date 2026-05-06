@@ -23,14 +23,18 @@ use crate::agents::extract;
 use crate::agents::prompt_builder::{AgentSummary, SystemPromptBuilder, MEMORY_INJECTION_CAP};
 use crate::agents::supervisor::SupervisedEvent;
 use crate::broker::TurnContext;
-use crate::db::models::{InterAgentMessage, InterAgentMessageStatus, MemorySource, MessageRole};
-use crate::db::queries::{self, NewMemoryEntry, NewMessage};
+use crate::db::models::{
+    InterAgentMessage, InterAgentMessageStatus, MemorySource, MessageRole, TaskPriority, TaskStatus,
+};
+use crate::db::queries::{self, NewMemoryEntry, NewMessage, NewTask};
 use crate::ipc::events::{
     AgentAssistantMessagePersistedPayload, AgentEventPayload, AgentIdentityUpdatedPayload,
     AgentInterAgentMessageDispatchedPayload, AgentInterAgentMessageFailedPayload,
-    AgentMemoryAddedPayload, AgentStatusChangePayload, EVENT_AGENT_ASSISTANT_MESSAGE_PERSISTED,
-    EVENT_AGENT_EVENT, EVENT_AGENT_IDENTITY_UPDATED, EVENT_AGENT_INTER_AGENT_MESSAGE_DISPATCHED,
+    AgentMemoryAddedPayload, AgentStatusChangePayload, AgentTaskCreatedPayload,
+    AgentTaskUpdatedPayload, EVENT_AGENT_ASSISTANT_MESSAGE_PERSISTED, EVENT_AGENT_EVENT,
+    EVENT_AGENT_IDENTITY_UPDATED, EVENT_AGENT_INTER_AGENT_MESSAGE_DISPATCHED,
     EVENT_AGENT_INTER_AGENT_MESSAGE_FAILED, EVENT_AGENT_MEMORY_ADDED, EVENT_AGENT_STATUS_CHANGE,
+    EVENT_AGENT_TASK_CREATED, EVENT_AGENT_TASK_UPDATED,
 };
 
 /// Inputs that define a single turn. The two public entrypoints
@@ -397,6 +401,93 @@ async fn run_turn(ctx: TurnContext, req: TurnRequest) -> Result<(), String> {
                                 error = %e,
                                 "send_to dispatch failed",
                             );
+                        }
+                    }
+                }
+
+                // Phase 7: extracted `<task>` markers. Create or
+                // update rows in the `tasks` table per ADR 0009.
+                // Failures (unknown id on update, db error, etc.)
+                // are logged but never crash the turn.
+                for et in extraction.tasks {
+                    if et.truncated {
+                        tracing::warn!(
+                            agent_id = %agent.id,
+                            "task marker exceeded length cap; payload truncated to 8KB",
+                        );
+                    }
+                    match et.action {
+                        extract::TaskAction::Create => {
+                            let title = et.title.unwrap_or_default();
+                            let status_str = et.status.as_deref().unwrap_or("queued");
+                            let Some(status) = TaskStatus::parse(status_str) else {
+                                tracing::warn!(
+                                    agent_id = %agent.id,
+                                    status = status_str,
+                                    "task create dropped: unknown status",
+                                );
+                                continue;
+                            };
+                            let priority = et
+                                .priority
+                                .as_deref()
+                                .and_then(TaskPriority::parse)
+                                .unwrap_or(TaskPriority::Normal);
+                            let id = uuid::Uuid::new_v4().to_string();
+                            match queries::insert_task(
+                                &ctx.pool,
+                                NewTask {
+                                    id: &id,
+                                    agent_id: &agent.id,
+                                    title: &title,
+                                    description: et.description.as_deref(),
+                                    status,
+                                    priority,
+                                },
+                            )
+                            .await
+                            {
+                                Ok(task) => {
+                                    let _ = ctx.app.emit(
+                                        EVENT_AGENT_TASK_CREATED,
+                                        AgentTaskCreatedPayload { task },
+                                    );
+                                }
+                                Err(e) => {
+                                    tracing::warn!(error = %e, "failed to insert task");
+                                }
+                            }
+                        }
+                        extract::TaskAction::Update => {
+                            let Some(task_id) = et.id.as_deref() else {
+                                continue;
+                            };
+                            let status = et.status.as_deref().and_then(TaskStatus::parse);
+                            let priority = et.priority.as_deref().and_then(TaskPriority::parse);
+                            match queries::update_task(
+                                &ctx.pool,
+                                task_id,
+                                et.title.as_deref(),
+                                et.description.as_deref(),
+                                status,
+                                priority,
+                            )
+                            .await
+                            {
+                                Ok(task) => {
+                                    let _ = ctx.app.emit(
+                                        EVENT_AGENT_TASK_UPDATED,
+                                        AgentTaskUpdatedPayload { task },
+                                    );
+                                }
+                                Err(e) => {
+                                    tracing::warn!(
+                                        error = %e,
+                                        task_id = task_id,
+                                        "task update dropped (unknown id?)",
+                                    );
+                                }
+                            }
                         }
                     }
                 }

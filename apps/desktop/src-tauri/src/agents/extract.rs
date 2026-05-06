@@ -3,11 +3,12 @@
 //!
 //! - `<remember>...</remember>` (ADR 0005)
 //! - `<send_to agent="Name">...</send_to>` (ADR 0006)
+//! - `<task action="..." ...>title — description</task>` (ADR 0009)
 //!
-//! Both must occupy the entire line (after trimming surrounding
+//! All three must occupy the entire line (after trimming surrounding
 //! whitespace) — see ADR 0005 for the rationale. The single-pass
-//! design lets us avoid running two independent line iterations over
-//! the same assistant text on every `TurnComplete`.
+//! design lets us avoid running multiple line iterations over the
+//! same assistant text on every `TurnComplete`.
 
 use super::remember::{ExtractedMemory, MEMORY_LENGTH_CAP};
 
@@ -34,11 +35,38 @@ const REMEMBER_CLOSE: &str = "</remember>";
 const SEND_TO_PREFIX: &str = "<send_to ";
 const SEND_TO_CLOSE: &str = "</send_to>";
 
+/// `<task ...>` opener prefix; ADR 0009.
+const TASK_PREFIX: &str = "<task ";
+const TASK_CLOSE: &str = "</task>";
+
+/// One `<task>` invocation extracted from a turn. Lifecycle handler
+/// in `agents::turn` interprets the `action` field and dispatches.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExtractedTask {
+    pub action: TaskAction,
+    /// Required on update, ignored on create.
+    pub id: Option<String>,
+    /// Optional on update; required on create (validated downstream).
+    pub status: Option<String>,
+    pub priority: Option<String>,
+    /// Body text split as `title — description`. Either may be empty.
+    pub title: Option<String>,
+    pub description: Option<String>,
+    pub truncated: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TaskAction {
+    Create,
+    Update,
+}
+
 #[derive(Debug, Default)]
 pub struct ExtractionResult {
     pub cleaned_text: String,
     pub memories: Vec<ExtractedMemory>,
     pub send_tos: Vec<ExtractedSendTo>,
+    pub tasks: Vec<ExtractedTask>,
 }
 
 /// Walk every line of `text` once. A line that exactly matches one of
@@ -67,12 +95,144 @@ pub fn extract(text: &str) -> ExtractionResult {
             }
             continue;
         }
+        if let Some(parsed) = match_task(trimmed) {
+            out.tasks.push(parsed);
+            continue;
+        }
         out.cleaned_text.push_str(content_part);
         if trailing_newline {
             out.cleaned_text.push('\n');
         }
     }
     out
+}
+
+/// `<task action="..." ...>title — description</task>`. Returns None
+/// for any malformed input — see ADR 0009 for the rules.
+fn match_task(line: &str) -> Option<ExtractedTask> {
+    let after_prefix = line.strip_prefix(TASK_PREFIX)?;
+    let tag_close = after_prefix.find('>')?;
+    let attrs = &after_prefix[..tag_close];
+    let body_with_close = &after_prefix[tag_close + 1..];
+    let body = body_with_close.strip_suffix(TASK_CLOSE)?;
+
+    let action = parse_attr(attrs, "action")?;
+    let action = match action.as_str() {
+        "create" => TaskAction::Create,
+        "update" => TaskAction::Update,
+        _ => return None,
+    };
+
+    let id = parse_attr(attrs, "id");
+    let status = parse_attr(attrs, "status");
+    let priority = parse_attr(attrs, "priority");
+
+    // ADR 0009: update requires an id. Create ignores any id sent.
+    if matches!(action, TaskAction::Update) && id.is_none() {
+        return None;
+    }
+    // ADR 0009: create requires a status.
+    if matches!(action, TaskAction::Create) && status.is_none() {
+        return None;
+    }
+
+    // Validate enum values; drop on unknown.
+    if let Some(s) = &status {
+        if !matches!(
+            s.as_str(),
+            "queued" | "running" | "awaiting_human" | "blocked" | "done" | "failed",
+        ) {
+            return None;
+        }
+    }
+    if let Some(p) = &priority {
+        if !matches!(p.as_str(), "low" | "normal" | "high") {
+            return None;
+        }
+    }
+
+    let trimmed_body = body.trim();
+    let (title, description) = if trimmed_body.is_empty() {
+        (None, None)
+    } else if let Some((t, d)) = trimmed_body.split_once(" — ") {
+        (Some(t.trim().to_string()), Some(d.trim().to_string()))
+    } else {
+        (Some(trimmed_body.to_string()), None)
+    };
+
+    // Title is required on create; on update it can stay empty.
+    if matches!(action, TaskAction::Create) && title.as_ref().map(|t| t.is_empty()).unwrap_or(true)
+    {
+        return None;
+    }
+
+    let (title_capped, truncated_title) = cap_string(title);
+    let (description_capped, truncated_description) = cap_string(description);
+
+    Some(ExtractedTask {
+        action,
+        id,
+        status,
+        priority,
+        title: title_capped,
+        description: description_capped,
+        truncated: truncated_title || truncated_description,
+    })
+}
+
+/// Generic attribute parser used by both `<send_to>` and `<task>`.
+/// Tolerates either single or double quotes. Returns the captured
+/// value (without the quotes).
+fn parse_attr(attrs: &str, name: &str) -> Option<String> {
+    let needle_eq = format!("{name}=");
+    let idx = find_attr(attrs, &needle_eq)?;
+    let after_eq = &attrs[idx + needle_eq.len()..];
+    let after_eq = after_eq.trim_start();
+    let (quote, rest) = if let Some(r) = after_eq.strip_prefix('"') {
+        ('"', r)
+    } else if let Some(r) = after_eq.strip_prefix('\'') {
+        ('\'', r)
+    } else {
+        return None;
+    };
+    let end = rest.find(quote)?;
+    Some(rest[..end].to_string())
+}
+
+/// Find the start of an attribute on a word boundary so a substring
+/// match (e.g. matching `id=` inside `valid="..."`) doesn't fool us.
+fn find_attr(attrs: &str, needle: &str) -> Option<usize> {
+    let mut search_from = 0;
+    while let Some(rel) = attrs[search_from..].find(needle) {
+        let abs = search_from + rel;
+        let preceded_by_space_or_start =
+            abs == 0 || attrs.as_bytes().get(abs - 1).copied() == Some(b' ');
+        if preceded_by_space_or_start {
+            return Some(abs);
+        }
+        search_from = abs + needle.len();
+    }
+    None
+}
+
+fn cap_string(input: Option<String>) -> (Option<String>, bool) {
+    let Some(s) = input else { return (None, false) };
+    if s.len() <= MEMORY_LENGTH_CAP {
+        return (Some(s), false);
+    }
+    let mut truncated: String = s
+        .chars()
+        .scan(0_usize, |acc, c| {
+            *acc += c.len_utf8();
+            if *acc <= MEMORY_LENGTH_CAP - SEND_TO_TRUNCATION_SUFFIX.len() {
+                Some(c)
+            } else {
+                None
+            }
+        })
+        .collect();
+    truncated.push_str(SEND_TO_TRUNCATION_SUFFIX);
+    (Some(truncated), true)
 }
 
 fn match_remember(line: &str) -> Option<String> {
@@ -272,5 +432,89 @@ done.";
         let r = extract("intro\n   <send_to agent=\"Atlas\">go</send_to>   \nouter");
         assert_eq!(r.cleaned_text, "intro\nouter");
         assert_eq!(send_to_pairs(&r), vec![("Atlas", "go")]);
+    }
+
+    #[test]
+    fn extracts_task_create_with_title_and_description() {
+        let r = extract(
+            "<task action=\"create\" status=\"queued\" priority=\"high\">Audit RL — Find missing burst guard</task>",
+        );
+        assert_eq!(r.tasks.len(), 1);
+        let t = &r.tasks[0];
+        assert!(matches!(t.action, TaskAction::Create));
+        assert_eq!(t.status.as_deref(), Some("queued"));
+        assert_eq!(t.priority.as_deref(), Some("high"));
+        assert_eq!(t.title.as_deref(), Some("Audit RL"));
+        assert_eq!(t.description.as_deref(), Some("Find missing burst guard"));
+    }
+
+    #[test]
+    fn extracts_task_update_status_only() {
+        let r = extract("<task action=\"update\" id=\"abc-123\" status=\"done\"></task>");
+        let t = &r.tasks[0];
+        assert!(matches!(t.action, TaskAction::Update));
+        assert_eq!(t.id.as_deref(), Some("abc-123"));
+        assert_eq!(t.status.as_deref(), Some("done"));
+        assert!(t.title.is_none());
+    }
+
+    #[test]
+    fn task_create_without_status_is_dropped() {
+        let r = extract("<task action=\"create\">title</task>");
+        assert!(r.tasks.is_empty());
+    }
+
+    #[test]
+    fn task_update_without_id_is_dropped() {
+        let r = extract("<task action=\"update\" status=\"done\"></task>");
+        assert!(r.tasks.is_empty());
+    }
+
+    #[test]
+    fn task_unknown_action_is_dropped() {
+        let r = extract("<task action=\"merge\">title</task>");
+        assert!(r.tasks.is_empty());
+    }
+
+    #[test]
+    fn task_unknown_status_is_dropped() {
+        let r = extract("<task action=\"create\" status=\"yolo\">title</task>");
+        assert!(r.tasks.is_empty());
+    }
+
+    #[test]
+    fn task_create_without_title_is_dropped() {
+        let r = extract("<task action=\"create\" status=\"queued\"></task>");
+        assert!(r.tasks.is_empty());
+    }
+
+    #[test]
+    fn task_marker_in_mid_prose_is_ignored() {
+        let text = "the syntax is `<task action=\"create\" status=\"queued\">x</task>` mid-line.";
+        let r = extract(text);
+        assert!(r.tasks.is_empty());
+        assert_eq!(r.cleaned_text, text);
+    }
+
+    #[test]
+    fn extracts_all_three_marker_types_in_one_turn() {
+        let text = "intro\n\
+<remember>note</remember>\n\
+<send_to agent=\"Atlas\">handle the migration</send_to>\n\
+<task action=\"create\" status=\"queued\">Audit — find issues</task>\n\
+done.";
+        let r = extract(text);
+        assert_eq!(r.memories.len(), 1);
+        assert_eq!(r.send_tos.len(), 1);
+        assert_eq!(r.tasks.len(), 1);
+        assert!(!r.cleaned_text.contains("<task"));
+    }
+
+    #[test]
+    fn task_attribute_order_is_flexible() {
+        // Attributes can appear in any order. Status before id, etc.
+        let r = extract("<task action=\"update\" status=\"done\" id=\"abc\"></task>");
+        assert_eq!(r.tasks[0].id.as_deref(), Some("abc"));
+        assert_eq!(r.tasks[0].status.as_deref(), Some("done"));
     }
 }

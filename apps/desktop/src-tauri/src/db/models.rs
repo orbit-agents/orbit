@@ -15,6 +15,8 @@ pub type MessageId = String;
 pub type MemoryEntryId = String;
 pub type InterAgentMessageId = String;
 pub type TeamId = String;
+pub type TaskId = String;
+pub type StickyNoteId = String;
 
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
 #[serde(rename_all = "camelCase")]
@@ -110,6 +112,100 @@ impl MessageRole {
             _ => None,
         }
     }
+}
+
+/// Phase 7: status of one task in an agent's task list. Stored as a
+/// string on the DB (matches the CHECK constraint in migration 0007).
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum TaskStatus {
+    Queued,
+    Running,
+    AwaitingHuman,
+    Blocked,
+    Done,
+    Failed,
+}
+
+impl TaskStatus {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Queued => "queued",
+            Self::Running => "running",
+            Self::AwaitingHuman => "awaiting_human",
+            Self::Blocked => "blocked",
+            Self::Done => "done",
+            Self::Failed => "failed",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "queued" => Some(Self::Queued),
+            "running" => Some(Self::Running),
+            "awaiting_human" => Some(Self::AwaitingHuman),
+            "blocked" => Some(Self::Blocked),
+            "done" => Some(Self::Done),
+            "failed" => Some(Self::Failed),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum TaskPriority {
+    Low,
+    Normal,
+    High,
+}
+
+impl TaskPriority {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Low => "low",
+            Self::Normal => "normal",
+            Self::High => "high",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "low" => Some(Self::Low),
+            "normal" => Some(Self::Normal),
+            "high" => Some(Self::High),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+#[serde(rename_all = "camelCase")]
+pub struct Task {
+    pub id: TaskId,
+    pub agent_id: AgentId,
+    pub title: String,
+    pub description: Option<String>,
+    /// Stored as a string so a future status enum addition doesn't
+    /// require rewriting old rows.
+    pub status: String,
+    pub priority: String,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+    pub completed_at: Option<DateTime<Utc>>,
+}
+
+/// Phase 7: human-only canvas annotation.
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+#[serde(rename_all = "camelCase")]
+pub struct StickyNote {
+    pub id: StickyNoteId,
+    pub content: String,
+    pub position_x: f64,
+    pub position_y: f64,
+    pub color: String,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
 }
 
 /// Phase 5: a visual grouping of agents on the canvas. Bounds are

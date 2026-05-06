@@ -142,6 +142,7 @@ impl SystemPromptBuilder {
 
         out.push_str(REMEMBER_TOOL_PROTOCOL);
         out.push_str(SEND_TO_TOOL_PROTOCOL);
+        out.push_str(TASK_TOOL_PROTOCOL);
 
         out
     }
@@ -189,6 +190,40 @@ shows them in the UI immediately. Use one tag per memory entry. Keep
 entries short, specific, and second-person ("table is named usres not
 users", "user prefers concise summaries"). Do not narrate that you are
 saving — just emit the tag.
+"#;
+
+/// Phase 7: protocol instructions for the `<task>` pseudo-tool.
+/// Documented as part of the system prompt; parsed by
+/// `agents::extract` after a turn completes. See ADR 0009.
+const TASK_TOOL_PROTOCOL: &str = r#"
+
+### Using the task tool
+Track your work as tasks the human can see. Emit a line on its own
+in this exact form (entire line, nothing else before or after):
+
+<task action="create" status="queued" priority="normal">title — description</task>
+
+To update an existing task you previously created, supply its id:
+
+<task action="update" id="task-uuid" status="done">optional new title — optional new description</task>
+
+The Orbit core persists each task and surfaces them in the right
+panel and the Task Inbox. The user can also edit and delete tasks
+themselves; conflicts resolve last-write-wins.
+
+Required fields:
+- `action`: "create" or "update"
+- `status` on create: one of queued | running | awaiting_human | blocked | done | failed
+- `id` on update: the task uuid you want to mutate
+
+Optional:
+- `priority`: low | normal | high (defaults to normal)
+- `title — description` body: title required on create, optional on update
+
+Use this when you've decomposed a goal into discrete pieces, when
+you start working on something the user can wait on, or when you
+finish a piece and want to mark progress. Don't narrate the marker
+itself — just emit the tag.
 "#;
 
 /// Phase 4: protocol instructions for the `send_message_to_agent`
@@ -366,6 +401,14 @@ mod tests {
         let p = builder().build();
         assert!(p.contains("<remember>"));
         assert!(p.contains("</remember>"));
+    }
+
+    #[test]
+    fn task_tool_protocol_is_documented() {
+        let p = builder().build();
+        assert!(p.contains("Using the task tool"));
+        assert!(p.contains("action=\"create\""));
+        assert!(p.contains("action=\"update\""));
     }
 
     #[test]

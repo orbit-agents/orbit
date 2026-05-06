@@ -7,7 +7,7 @@ use sqlx::SqlitePool;
 
 use super::models::{
     Agent, Conversation, InterAgentMessage, InterAgentMessageStatus, MemoryEntry, MemorySource,
-    Message, MessageRole, Team,
+    Message, MessageRole, StickyNote, Task, TaskPriority, TaskStatus, Team,
 };
 use super::DbError;
 
@@ -479,6 +479,225 @@ pub async fn list_inter_agent_audit_log(
     .fetch_all(pool)
     .await?;
     Ok(rows)
+}
+
+// ─── Phase 7: tasks ───────────────────────────────────────────────────────
+
+pub struct NewTask<'a> {
+    pub id: &'a str,
+    pub agent_id: &'a str,
+    pub title: &'a str,
+    pub description: Option<&'a str>,
+    pub status: TaskStatus,
+    pub priority: TaskPriority,
+}
+
+pub async fn insert_task(pool: &SqlitePool, new: NewTask<'_>) -> Result<Task, DbError> {
+    let now = Utc::now();
+    sqlx::query(
+        "INSERT INTO tasks (id, agent_id, title, description, status, priority,
+                            created_at, updated_at, completed_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL)",
+    )
+    .bind(new.id)
+    .bind(new.agent_id)
+    .bind(new.title)
+    .bind(new.description)
+    .bind(new.status.as_str())
+    .bind(new.priority.as_str())
+    .bind(now)
+    .bind(now)
+    .execute(pool)
+    .await?;
+    get_task(pool, new.id)
+        .await?
+        .ok_or_else(|| DbError::Sqlx(sqlx::Error::RowNotFound))
+}
+
+pub async fn get_task(pool: &SqlitePool, id: &str) -> Result<Option<Task>, DbError> {
+    let row = sqlx::query_as::<_, Task>("SELECT * FROM tasks WHERE id = ?")
+        .bind(id)
+        .fetch_optional(pool)
+        .await?;
+    Ok(row)
+}
+
+pub async fn list_tasks_for_agent(pool: &SqlitePool, agent_id: &str) -> Result<Vec<Task>, DbError> {
+    let rows = sqlx::query_as::<_, Task>(
+        "SELECT * FROM tasks WHERE agent_id = ? ORDER BY created_at DESC",
+    )
+    .bind(agent_id)
+    .fetch_all(pool)
+    .await?;
+    Ok(rows)
+}
+
+pub async fn list_all_tasks(pool: &SqlitePool, limit: i64) -> Result<Vec<Task>, DbError> {
+    let rows = sqlx::query_as::<_, Task>("SELECT * FROM tasks ORDER BY updated_at DESC LIMIT ?")
+        .bind(limit)
+        .fetch_all(pool)
+        .await?;
+    Ok(rows)
+}
+
+/// Update any subset of a task's mutable fields. Each `Option` left
+/// `None` keeps the existing value. `status = Done` automatically
+/// stamps `completed_at`; any non-Done status clears it.
+pub async fn update_task(
+    pool: &SqlitePool,
+    id: &str,
+    title: Option<&str>,
+    description: Option<&str>,
+    status: Option<TaskStatus>,
+    priority: Option<TaskPriority>,
+) -> Result<Task, DbError> {
+    let now = Utc::now();
+    if let Some(t) = title {
+        sqlx::query("UPDATE tasks SET title = ?, updated_at = ? WHERE id = ?")
+            .bind(t)
+            .bind(now)
+            .bind(id)
+            .execute(pool)
+            .await?;
+    }
+    if let Some(d) = description {
+        sqlx::query("UPDATE tasks SET description = ?, updated_at = ? WHERE id = ?")
+            .bind(d)
+            .bind(now)
+            .bind(id)
+            .execute(pool)
+            .await?;
+    }
+    if let Some(s) = status {
+        let completed_at = if matches!(s, TaskStatus::Done) {
+            Some(now)
+        } else {
+            None
+        };
+        sqlx::query("UPDATE tasks SET status = ?, completed_at = ?, updated_at = ? WHERE id = ?")
+            .bind(s.as_str())
+            .bind(completed_at)
+            .bind(now)
+            .bind(id)
+            .execute(pool)
+            .await?;
+    }
+    if let Some(p) = priority {
+        sqlx::query("UPDATE tasks SET priority = ?, updated_at = ? WHERE id = ?")
+            .bind(p.as_str())
+            .bind(now)
+            .bind(id)
+            .execute(pool)
+            .await?;
+    }
+    get_task(pool, id)
+        .await?
+        .ok_or_else(|| DbError::Sqlx(sqlx::Error::RowNotFound))
+}
+
+pub async fn delete_task(pool: &SqlitePool, id: &str) -> Result<(), DbError> {
+    sqlx::query("DELETE FROM tasks WHERE id = ?")
+        .bind(id)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+// ─── Phase 7: sticky notes ────────────────────────────────────────────────
+
+pub struct NewStickyNote<'a> {
+    pub id: &'a str,
+    pub content: &'a str,
+    pub position_x: f64,
+    pub position_y: f64,
+    pub color: &'a str,
+}
+
+pub async fn insert_sticky_note(
+    pool: &SqlitePool,
+    new: NewStickyNote<'_>,
+) -> Result<StickyNote, DbError> {
+    let now = Utc::now();
+    sqlx::query(
+        "INSERT INTO sticky_notes (id, content, position_x, position_y, color, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?)",
+    )
+    .bind(new.id)
+    .bind(new.content)
+    .bind(new.position_x)
+    .bind(new.position_y)
+    .bind(new.color)
+    .bind(now)
+    .bind(now)
+    .execute(pool)
+    .await?;
+    get_sticky_note(pool, new.id)
+        .await?
+        .ok_or_else(|| DbError::Sqlx(sqlx::Error::RowNotFound))
+}
+
+pub async fn get_sticky_note(pool: &SqlitePool, id: &str) -> Result<Option<StickyNote>, DbError> {
+    let row = sqlx::query_as::<_, StickyNote>("SELECT * FROM sticky_notes WHERE id = ?")
+        .bind(id)
+        .fetch_optional(pool)
+        .await?;
+    Ok(row)
+}
+
+pub async fn list_sticky_notes(pool: &SqlitePool) -> Result<Vec<StickyNote>, DbError> {
+    let rows =
+        sqlx::query_as::<_, StickyNote>("SELECT * FROM sticky_notes ORDER BY created_at ASC")
+            .fetch_all(pool)
+            .await?;
+    Ok(rows)
+}
+
+pub async fn update_sticky_note(
+    pool: &SqlitePool,
+    id: &str,
+    content: Option<&str>,
+    position: Option<(f64, f64)>,
+    color: Option<&str>,
+) -> Result<StickyNote, DbError> {
+    let now = Utc::now();
+    if let Some(c) = content {
+        sqlx::query("UPDATE sticky_notes SET content = ?, updated_at = ? WHERE id = ?")
+            .bind(c)
+            .bind(now)
+            .bind(id)
+            .execute(pool)
+            .await?;
+    }
+    if let Some((x, y)) = position {
+        sqlx::query(
+            "UPDATE sticky_notes SET position_x = ?, position_y = ?, updated_at = ? WHERE id = ?",
+        )
+        .bind(x)
+        .bind(y)
+        .bind(now)
+        .bind(id)
+        .execute(pool)
+        .await?;
+    }
+    if let Some(c) = color {
+        sqlx::query("UPDATE sticky_notes SET color = ?, updated_at = ? WHERE id = ?")
+            .bind(c)
+            .bind(now)
+            .bind(id)
+            .execute(pool)
+            .await?;
+    }
+    get_sticky_note(pool, id)
+        .await?
+        .ok_or_else(|| DbError::Sqlx(sqlx::Error::RowNotFound))
+}
+
+pub async fn delete_sticky_note(pool: &SqlitePool, id: &str) -> Result<(), DbError> {
+    sqlx::query("DELETE FROM sticky_notes WHERE id = ?")
+        .bind(id)
+        .execute(pool)
+        .await?;
+    Ok(())
 }
 
 // ─── Phase 6: git isolation ───────────────────────────────────────────────
@@ -1158,6 +1377,120 @@ mod tests {
         assert!(cleared.worktree_branch.is_none());
         // working_dir is preserved — manager.remove() handles the
         // filesystem cleanup; the column doesn't revert on its own.
+    }
+
+    #[tokio::test]
+    async fn task_lifecycle_create_update_status_complete_delete() {
+        let pool = memory_pool().await;
+        insert_test_agent(&pool, "a").await;
+
+        let task = insert_task(
+            &pool,
+            NewTask {
+                id: "t1",
+                agent_id: "a",
+                title: "Audit ratelimiter",
+                description: Some("Find missing burst guard"),
+                status: TaskStatus::Queued,
+                priority: TaskPriority::Normal,
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(task.title, "Audit ratelimiter");
+        assert_eq!(task.status, "queued");
+        assert!(task.completed_at.is_none());
+
+        // Status transitions stamp completed_at on Done.
+        let running = update_task(&pool, "t1", None, None, Some(TaskStatus::Running), None)
+            .await
+            .unwrap();
+        assert_eq!(running.status, "running");
+        assert!(running.completed_at.is_none());
+
+        let done = update_task(&pool, "t1", None, None, Some(TaskStatus::Done), None)
+            .await
+            .unwrap();
+        assert_eq!(done.status, "done");
+        assert!(done.completed_at.is_some());
+
+        // Going back to queued clears completed_at.
+        let requeued = update_task(&pool, "t1", None, None, Some(TaskStatus::Queued), None)
+            .await
+            .unwrap();
+        assert!(requeued.completed_at.is_none());
+
+        // Title-only update preserves status.
+        let renamed = update_task(&pool, "t1", Some("Audit RL"), None, None, None)
+            .await
+            .unwrap();
+        assert_eq!(renamed.title, "Audit RL");
+        assert_eq!(renamed.status, "queued");
+
+        delete_task(&pool, "t1").await.unwrap();
+        assert!(get_task(&pool, "t1").await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn deleting_agent_cascades_tasks() {
+        let pool = memory_pool().await;
+        insert_test_agent(&pool, "a").await;
+        insert_task(
+            &pool,
+            NewTask {
+                id: "t1",
+                agent_id: "a",
+                title: "x",
+                description: None,
+                status: TaskStatus::Queued,
+                priority: TaskPriority::Normal,
+            },
+        )
+        .await
+        .unwrap();
+        delete_agent(&pool, "a").await.unwrap();
+        let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM tasks")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(count.0, 0);
+    }
+
+    #[tokio::test]
+    async fn sticky_note_round_trip() {
+        let pool = memory_pool().await;
+        let note = insert_sticky_note(
+            &pool,
+            NewStickyNote {
+                id: "s1",
+                content: "review the diff",
+                position_x: 100.0,
+                position_y: 200.0,
+                color: "#3a4a3e",
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(note.content, "review the diff");
+
+        let moved = update_sticky_note(&pool, "s1", None, Some((300.0, 400.0)), None)
+            .await
+            .unwrap();
+        assert_eq!(moved.position_x, 300.0);
+        assert_eq!(moved.position_y, 400.0);
+
+        let recolored = update_sticky_note(&pool, "s1", None, None, Some("#48383f"))
+            .await
+            .unwrap();
+        assert_eq!(recolored.color, "#48383f");
+
+        let edited = update_sticky_note(&pool, "s1", Some("ship it"), None, None)
+            .await
+            .unwrap();
+        assert_eq!(edited.content, "ship it");
+
+        delete_sticky_note(&pool, "s1").await.unwrap();
+        assert!(get_sticky_note(&pool, "s1").await.unwrap().is_none());
     }
 
     #[tokio::test]

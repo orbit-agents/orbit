@@ -15,14 +15,23 @@ use crate::agents::prompt_builder::{
 };
 use crate::broker::TurnContext;
 use crate::core::AppState;
-use crate::db::models::{Agent, InterAgentMessage, MemoryEntry, MemorySource, Message, Team};
-use crate::db::queries::{self, NewAgent, NewMemoryEntry, NewTeam, WorktreeRecord};
+use crate::db::models::{
+    Agent, InterAgentMessage, MemoryEntry, MemorySource, Message, StickyNote, Task, TaskPriority,
+    TaskStatus, Team,
+};
+use crate::db::queries::{
+    self, NewAgent, NewMemoryEntry, NewStickyNote, NewTask, NewTeam, WorktreeRecord,
+};
 use crate::git::{FileDiff, WorktreeManager};
 
 use super::events::{
     AgentIdentityUpdatedPayload, AgentMemoryAddedPayload, AgentStatusChangePayload,
-    AgentTerminatedPayload, EVENT_AGENT_IDENTITY_UPDATED, EVENT_AGENT_MEMORY_ADDED,
-    EVENT_AGENT_STATUS_CHANGE, EVENT_AGENT_TERMINATED,
+    AgentTaskCreatedPayload, AgentTaskDeletedPayload, AgentTaskUpdatedPayload,
+    AgentTerminatedPayload, StickyNoteCreatedPayload, StickyNoteDeletedPayload,
+    StickyNoteUpdatedPayload, EVENT_AGENT_IDENTITY_UPDATED, EVENT_AGENT_MEMORY_ADDED,
+    EVENT_AGENT_STATUS_CHANGE, EVENT_AGENT_TASK_CREATED, EVENT_AGENT_TASK_DELETED,
+    EVENT_AGENT_TASK_UPDATED, EVENT_AGENT_TERMINATED, EVENT_STICKY_NOTE_CREATED,
+    EVENT_STICKY_NOTE_DELETED, EVENT_STICKY_NOTE_UPDATED,
 };
 
 /// User-facing command error type. Anything that reaches the frontend is
@@ -897,6 +906,295 @@ pub async fn agent_get_audit_log(
 #[serde(rename_all = "camelCase")]
 pub struct SystemHealth {
     pub engine: EngineHealth,
+}
+
+// ─── Phase 7: tasks + sticky notes + activity feed ────────────────────────
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateTaskInput {
+    pub agent_id: AgentId,
+    pub title: String,
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub status: Option<String>,
+    #[serde(default)]
+    pub priority: Option<String>,
+}
+
+#[tauri::command]
+pub async fn task_create(
+    state: State<'_, AppState>,
+    app: AppHandle,
+    input: CreateTaskInput,
+) -> CommandResult<Task> {
+    if input.title.trim().is_empty() {
+        return Err("Task title cannot be empty.".to_string());
+    }
+    let status = input
+        .status
+        .as_deref()
+        .and_then(TaskStatus::parse)
+        .unwrap_or(TaskStatus::Queued);
+    let priority = input
+        .priority
+        .as_deref()
+        .and_then(TaskPriority::parse)
+        .unwrap_or(TaskPriority::Normal);
+    let id = uuid::Uuid::new_v4().to_string();
+    let task = queries::insert_task(
+        &state.pool,
+        NewTask {
+            id: &id,
+            agent_id: &input.agent_id,
+            title: input.title.trim(),
+            description: input.description.as_deref(),
+            status,
+            priority,
+        },
+    )
+    .await
+    .map_err(|e| err("Failed to create task", e))?;
+    let _ = app.emit(
+        EVENT_AGENT_TASK_CREATED,
+        AgentTaskCreatedPayload { task: task.clone() },
+    );
+    Ok(task)
+}
+
+#[tauri::command]
+pub async fn task_list(state: State<'_, AppState>, agent_id: AgentId) -> CommandResult<Vec<Task>> {
+    queries::list_tasks_for_agent(&state.pool, &agent_id)
+        .await
+        .map_err(|e| err("Failed to list tasks", e))
+}
+
+/// Inbox view: every task across every agent, newest-updated first.
+#[tauri::command]
+pub async fn task_list_all(
+    state: State<'_, AppState>,
+    limit: Option<i64>,
+) -> CommandResult<Vec<Task>> {
+    queries::list_all_tasks(&state.pool, limit.unwrap_or(500))
+        .await
+        .map_err(|e| err("Failed to load tasks", e))
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateTaskInput {
+    pub task_id: String,
+    #[serde(default)]
+    pub title: Option<String>,
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub status: Option<String>,
+    #[serde(default)]
+    pub priority: Option<String>,
+}
+
+#[tauri::command]
+pub async fn task_update(
+    state: State<'_, AppState>,
+    app: AppHandle,
+    input: UpdateTaskInput,
+) -> CommandResult<Task> {
+    let status = input.status.as_deref().and_then(TaskStatus::parse);
+    let priority = input.priority.as_deref().and_then(TaskPriority::parse);
+    let task = queries::update_task(
+        &state.pool,
+        &input.task_id,
+        input.title.as_deref(),
+        input.description.as_deref(),
+        status,
+        priority,
+    )
+    .await
+    .map_err(|e| err("Failed to update task", e))?;
+    let _ = app.emit(
+        EVENT_AGENT_TASK_UPDATED,
+        AgentTaskUpdatedPayload { task: task.clone() },
+    );
+    Ok(task)
+}
+
+#[tauri::command]
+pub async fn task_delete(
+    state: State<'_, AppState>,
+    app: AppHandle,
+    task_id: String,
+    agent_id: AgentId,
+) -> CommandResult<()> {
+    queries::delete_task(&state.pool, &task_id)
+        .await
+        .map_err(|e| err("Failed to delete task", e))?;
+    let _ = app.emit(
+        EVENT_AGENT_TASK_DELETED,
+        AgentTaskDeletedPayload { task_id, agent_id },
+    );
+    Ok(())
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateStickyNoteInput {
+    pub content: String,
+    pub position_x: f64,
+    pub position_y: f64,
+    pub color: String,
+}
+
+#[tauri::command]
+pub async fn sticky_note_create(
+    state: State<'_, AppState>,
+    app: AppHandle,
+    input: CreateStickyNoteInput,
+) -> CommandResult<StickyNote> {
+    let id = uuid::Uuid::new_v4().to_string();
+    let note = queries::insert_sticky_note(
+        &state.pool,
+        NewStickyNote {
+            id: &id,
+            content: &input.content,
+            position_x: input.position_x,
+            position_y: input.position_y,
+            color: &input.color,
+        },
+    )
+    .await
+    .map_err(|e| err("Failed to create sticky note", e))?;
+    let _ = app.emit(
+        EVENT_STICKY_NOTE_CREATED,
+        StickyNoteCreatedPayload { note: note.clone() },
+    );
+    Ok(note)
+}
+
+#[tauri::command]
+pub async fn sticky_note_list(state: State<'_, AppState>) -> CommandResult<Vec<StickyNote>> {
+    queries::list_sticky_notes(&state.pool)
+        .await
+        .map_err(|e| err("Failed to list sticky notes", e))
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateStickyNoteInput {
+    pub note_id: String,
+    #[serde(default)]
+    pub content: Option<String>,
+    #[serde(default)]
+    pub position_x: Option<f64>,
+    #[serde(default)]
+    pub position_y: Option<f64>,
+    #[serde(default)]
+    pub color: Option<String>,
+}
+
+#[tauri::command]
+pub async fn sticky_note_update(
+    state: State<'_, AppState>,
+    app: AppHandle,
+    input: UpdateStickyNoteInput,
+) -> CommandResult<StickyNote> {
+    let position = match (input.position_x, input.position_y) {
+        (Some(x), Some(y)) => Some((x, y)),
+        _ => None,
+    };
+    let note = queries::update_sticky_note(
+        &state.pool,
+        &input.note_id,
+        input.content.as_deref(),
+        position,
+        input.color.as_deref(),
+    )
+    .await
+    .map_err(|e| err("Failed to update sticky note", e))?;
+    let _ = app.emit(
+        EVENT_STICKY_NOTE_UPDATED,
+        StickyNoteUpdatedPayload { note: note.clone() },
+    );
+    Ok(note)
+}
+
+#[tauri::command]
+pub async fn sticky_note_delete(
+    state: State<'_, AppState>,
+    app: AppHandle,
+    note_id: String,
+) -> CommandResult<()> {
+    queries::delete_sticky_note(&state.pool, &note_id)
+        .await
+        .map_err(|e| err("Failed to delete sticky note", e))?;
+    let _ = app.emit(
+        EVENT_STICKY_NOTE_DELETED,
+        StickyNoteDeletedPayload { note_id },
+    );
+    Ok(())
+}
+
+/// Phase 7: chronological feed of recent agent activity. Union of
+/// task state transitions + agent-saved memory entries. ADR 0009.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ActivityEntry {
+    /// `'task'` or `'memory'`.
+    pub kind: String,
+    pub agent_id: AgentId,
+    pub timestamp: String,
+    /// One-line summary (truncated). Frontends format; we hand them
+    /// fields they need.
+    pub title: String,
+    pub status: Option<String>,
+    pub task_id: Option<String>,
+    pub memory_id: Option<String>,
+}
+
+#[tauri::command]
+pub async fn agent_get_activity_feed(
+    state: State<'_, AppState>,
+    limit: Option<i64>,
+) -> CommandResult<Vec<ActivityEntry>> {
+    let cap = limit.unwrap_or(50);
+    let tasks = queries::list_all_tasks(&state.pool, cap)
+        .await
+        .map_err(|e| err("Failed to load tasks", e))?;
+    let mut entries: Vec<ActivityEntry> = Vec::new();
+    for t in tasks {
+        entries.push(ActivityEntry {
+            kind: "task".into(),
+            agent_id: t.agent_id.clone(),
+            timestamp: t.updated_at.to_rfc3339(),
+            title: t.title.clone(),
+            status: Some(t.status.clone()),
+            task_id: Some(t.id.clone()),
+            memory_id: None,
+        });
+    }
+    // Agent-saved memory entries across all agents.
+    let agent_memories: Vec<MemoryEntry> = sqlx::query_as::<_, MemoryEntry>(
+        "SELECT * FROM memory_entries WHERE source = 'agent' ORDER BY created_at DESC LIMIT ?",
+    )
+    .bind(cap)
+    .fetch_all(&state.pool)
+    .await
+    .map_err(|e| err("Failed to load memory entries", e))?;
+    for m in agent_memories {
+        entries.push(ActivityEntry {
+            kind: "memory".into(),
+            agent_id: m.agent_id.clone(),
+            timestamp: m.created_at.to_rfc3339(),
+            title: m.content.clone(),
+            status: None,
+            task_id: None,
+            memory_id: Some(m.id.clone()),
+        });
+    }
+    entries.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
+    entries.truncate(cap as usize);
+    Ok(entries)
 }
 
 /// Phase 6: open the platform's file manager at the given path.

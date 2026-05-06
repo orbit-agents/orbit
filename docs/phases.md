@@ -128,9 +128,25 @@ One git worktree per agent, one branch per agent. `libgit2` (`git2`)-based workt
 10. **Terminate vs delete.** Terminate keeps the worktree + branch. Delete removes the worktree directory, prunes the libgit2 metadata, and deletes the branch.
 11. **Cross-platform.** Same flow on macOS, Windows, and Linux. libgit2 is bundled with `git2`; no external `git` binary is required at runtime.
 
-## Phase 7 — Tasks + status reports + sticky notes · _Planned_
+## Phase 7 — Tasks + status reports + sticky notes · _Complete_
 
-Agents maintain a task list. Periodic status reports posted to a shared channel. Sticky notes placeable on the canvas for human annotation.
+Per-agent task lists. Activity feed (= status reports as a derived chronological view of task transitions + agent-saved memory). Human-only sticky notes on the canvas.
+
+**Deliverable:** spawn an agent, ask it to plan a multi-step job, watch it create a `<task>` per step, mark them running → done as it works. Open the Task Inbox to see all tasks across all agents in lanes. Drop a sticky note on the canvas to remind yourself something.
+
+### Manual test checklist
+
+1. **Right-panel Tasks section.** Select an agent. Open Settings → Tasks. The list is empty. Click "Add task", type "Audit ratelimiter", press Enter. The task appears under "Queued". Click the round checkbox to cycle queued → running → done.
+2. **Agent-emitted task.** Tell the agent "Plan the migration as 3 tasks." On TurnComplete, three new tasks appear in the right panel under "Queued" (or whatever status the agent picked).
+3. **Agent updates its own task.** Ask the agent to mark the first one done. Its next turn emits `<task action="update" id="..." status="done">` and the row flips to the Done lane.
+4. **Inline edit + delete.** Hover a task row; pencil icon edits the title inline (Enter saves, Escape cancels); trash icon deletes.
+5. **Task Inbox view.** Click "Tasks" in the sidebar Workspace section. The center pane swaps from canvas to inbox. Lanes (Awaiting you / Running / Queued / Blocked / Done) populate across all agents. Click a task card → canvas reopens, agent selected, Settings tab focused.
+6. **Activity feed.** Inbox right rail shows the chronological feed: task transitions and `<remember>` events grouped by Today / Yesterday / weekday.
+7. **Sticky note via shift-click.** Switch back to Canvas. Hold Shift and click empty canvas. A blank sticky note appears at the click point (snapped to grid). Double-click to edit; type; click out (or Cmd/Ctrl+Enter). Drag to move (snaps on release). Hover → X to delete.
+8. **Sticky note via toolbar.** Click the StickyNote icon in the canvas toolbar — a new note drops at the viewport center.
+9. **Restart persistence.** Quit, reopen. Tasks + sticky notes survive exactly. The activity feed still shows the same recent transitions.
+10. **Marker discussion safety.** Ask the agent "what's the syntax of the task tool?" — its reply mentions `<task action="...">` mid-prose; verify no spurious task is created.
+11. **Cross-platform.** Same flow on macOS, Windows, and Linux.
 
 ## Phase 8 — Group conversations + terminal + MCP · _Planned_
 
