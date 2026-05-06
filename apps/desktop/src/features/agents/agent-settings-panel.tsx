@@ -8,6 +8,7 @@ import { AccordionSection } from '@/components/accordion';
 import { IdentityEditor } from './identity/identity-editor';
 import { MemoryList } from './identity/memory-list';
 import { AdvancedSection } from './identity/advanced-section';
+import { FolderAccess } from './identity/folder-access';
 import { InboxList } from './inbox/inbox-list';
 
 const SOUL_PLACEHOLDER =
@@ -143,6 +144,14 @@ export function AgentSettingsPanel(): JSX.Element {
         <InboxList agentId={agent.id} />
       </AccordionSection>
 
+      <AccordionSection title="Folder access" summary={folderAccessSummary(agent.folderAccess)}>
+        <FolderAccess
+          agentId={agent.id}
+          workingDir={agent.workingDir}
+          rawFolderAccess={agent.folderAccess}
+        />
+      </AccordionSection>
+
       <AccordionSection title="Advanced" summary="CLAUDE.md import">
         <AdvancedSection
           agentId={agent.id}
@@ -161,6 +170,19 @@ export function AgentSettingsPanel(): JSX.Element {
 function truncate(s: string, n: number): string {
   if (s.length <= n) return s;
   return `${s.slice(0, n - 1)}…`;
+}
+
+function folderAccessSummary(raw: string): string {
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (Array.isArray(parsed)) {
+      if (parsed.length === 0) return 'Working dir only';
+      return `${parsed.length} extra ${parsed.length === 1 ? 'folder' : 'folders'}`;
+    }
+  } catch {
+    // fall through
+  }
+  return 'Working dir only';
 }
 
 function InfoRow({

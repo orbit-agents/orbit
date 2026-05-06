@@ -14,7 +14,7 @@ import { useKeyboardShortcut } from '@/hooks/use-keyboard-shortcut';
 import { useAgentEvents } from '@/hooks/use-agent-events';
 import { useUiStore } from '@/stores/ui-store';
 import { useAgentsStore } from '@/stores/agents';
-import { ipcAgentList, ipcSystemHealthCheck } from '@/lib/ipc';
+import { ipcAgentList, ipcSystemHealthCheck, ipcTeamList } from '@/lib/ipc';
 import { cn } from '@/lib/cn';
 
 function ResizeHandle(): JSX.Element {
@@ -50,6 +50,7 @@ export function App(): JSX.Element {
   );
 
   const hydrate = useAgentsStore((s) => s.hydrate);
+  const hydrateTeams = useAgentsStore((s) => s.hydrateTeams);
   const [spawnOpen, setSpawnOpen] = useState(false);
   const [spawnPosition, setSpawnPosition] = useState<XY | null>(null);
 
@@ -73,6 +74,16 @@ export function App(): JSX.Element {
       const agents = await ipcAgentList();
       hydrate(agents);
       return agents;
+    },
+  });
+
+  useQuery({
+    queryKey: ['teams'],
+    enabled: Boolean(health.data?.engine.available && health.data?.engine.authenticated),
+    queryFn: async () => {
+      const teams = await ipcTeamList();
+      hydrateTeams(teams);
+      return teams;
     },
   });
 

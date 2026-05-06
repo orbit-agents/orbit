@@ -5,12 +5,14 @@ import type {
   InterAgentMessage,
   MemoryEntry,
   Message,
+  Team,
   TokenUsage,
 } from '@orbit/types';
 
 export type AgentId = string;
 export type MemoryEntryId = string;
 export type InterAgentMessageId = string;
+export type TeamId = string;
 
 export interface XY {
   x: number;
@@ -72,6 +74,15 @@ interface AgentsState {
    *  events. The MessageFlightLayer reads from this. */
   inFlightMessages: Record<InterAgentMessageId, InterAgentMessage>;
 
+  /** Phase 5: teams keyed by id. Order is stable on creation. */
+  teams: Record<TeamId, Team>;
+  orderedTeamIds: TeamId[];
+
+  /** Phase 5: when set, the canvas pans/fits to the named team's
+   *  members on the next render and then clears the value. Used by
+   *  the sidebar's Teams section to request "show me this team". */
+  focusedTeamId: TeamId | null;
+
   hydrate: (agents: Agent[]) => void;
   upsertAgent: (agent: Agent) => void;
   removeAgent: (agentId: AgentId) => void;
@@ -88,6 +99,12 @@ interface AgentsState {
 
   setInterAgentMessages: (agentId: AgentId, messages: InterAgentMessage[]) => void;
   upsertInterAgentMessage: (message: InterAgentMessage) => void;
+
+  hydrateTeams: (teams: Team[]) => void;
+  upsertTeam: (team: Team) => void;
+  removeTeam: (teamId: TeamId) => void;
+  setAgentTeam: (agentId: AgentId, teamId: TeamId | null) => void;
+  focusTeam: (teamId: TeamId | null) => void;
 
   setMessages: (agentId: AgentId, messages: Message[]) => void;
   appendPersistedMessage: (agentId: AgentId, message: Message) => void;
@@ -117,6 +134,9 @@ export const useAgentsStore = create<AgentsState>((set, get) => ({
   recentlyAddedMemoryIds: {},
   interAgentMessagesByAgent: {},
   inFlightMessages: {},
+  teams: {},
+  orderedTeamIds: [],
+  focusedTeamId: null,
 
   hydrate: (agents) =>
     set(() => {
@@ -323,6 +343,55 @@ export const useAgentsStore = create<AgentsState>((set, get) => ({
       }
       return { interAgentMessagesByAgent: next, inFlightMessages: flight };
     }),
+
+  hydrateTeams: (teams) =>
+    set(() => {
+      const map: Record<TeamId, Team> = {};
+      const order: TeamId[] = [];
+      for (const t of teams) {
+        map[t.id] = t;
+        order.push(t.id);
+      }
+      return { teams: map, orderedTeamIds: order };
+    }),
+
+  upsertTeam: (team) =>
+    set((s) => {
+      const order = s.orderedTeamIds.includes(team.id)
+        ? s.orderedTeamIds
+        : [...s.orderedTeamIds, team.id];
+      return {
+        teams: { ...s.teams, [team.id]: team },
+        orderedTeamIds: order,
+      };
+    }),
+
+  removeTeam: (teamId) =>
+    set((s) => {
+      const { [teamId]: _gone, ...rest } = s.teams;
+      // Clear team_id from any agent that referenced it, optimistically.
+      const nextAgents: Record<AgentId, Agent> = {};
+      for (const id of Object.keys(s.agents)) {
+        const a = s.agents[id]!;
+        nextAgents[id] = a.teamId === teamId ? { ...a, teamId: null } : a;
+      }
+      return {
+        teams: rest,
+        orderedTeamIds: s.orderedTeamIds.filter((id) => id !== teamId),
+        agents: nextAgents,
+      };
+    }),
+
+  setAgentTeam: (agentId, teamId) =>
+    set((s) => {
+      const agent = s.agents[agentId];
+      if (!agent) return s;
+      return {
+        agents: { ...s.agents, [agentId]: { ...agent, teamId } },
+      };
+    }),
+
+  focusTeam: (teamId) => set(() => ({ focusedTeamId: teamId })),
 
   applyEvent: (agentId, event) => {
     const current = get().streamingByAgent[agentId] ?? null;

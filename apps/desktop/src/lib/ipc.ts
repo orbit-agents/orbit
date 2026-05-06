@@ -6,6 +6,7 @@ import type {
   MemoryEntry,
   Message,
   SystemHealth,
+  Team,
 } from '@orbit/types';
 
 /** Input shape matching the Rust `SpawnAgentInput` struct. */
@@ -97,6 +98,45 @@ export function ipcAgentGetInterAgentMessages(
 
 export function ipcAgentGetAuditLog(limit?: number): Promise<InterAgentMessage[]> {
   return invoke<InterAgentMessage[]>('agent_get_audit_log', { limit });
+}
+
+// ─── Phase 5: teams + folder access ───────────────────────────────────────
+
+export interface CreateTeamInput {
+  name: string;
+  color: string;
+}
+
+export function ipcTeamCreate(input: CreateTeamInput): Promise<Team> {
+  return invoke<Team>('team_create', { input });
+}
+
+export function ipcTeamList(): Promise<Team[]> {
+  return invoke<Team[]>('team_list');
+}
+
+export interface UpdateTeamInput {
+  teamId: string;
+  name?: string | null;
+  color?: string | null;
+}
+
+export function ipcTeamUpdate(input: UpdateTeamInput): Promise<void> {
+  return invoke<void>('team_update', { input });
+}
+
+export function ipcTeamDelete(teamId: string): Promise<void> {
+  return invoke<void>('team_delete', { teamId });
+}
+
+export function ipcAgentSetTeam(agentId: string, teamId: string | null): Promise<void> {
+  return invoke<void>('agent_set_team', { agentId, teamId });
+}
+
+export function ipcAgentUpdateFolderAccess(agentId: string, folders: string[]): Promise<void> {
+  return invoke<void>('agent_update_folder_access', {
+    input: { agentId, folders },
+  });
 }
 
 export function ipcSystemHealthCheck(): Promise<SystemHealth> {

@@ -1,5 +1,6 @@
-import { FolderIcon, MessageSquareIcon, SearchIcon, UsersIcon } from 'lucide-react';
+import { FolderIcon, MessageSquareIcon, SearchIcon } from 'lucide-react';
 import { cn } from '@/lib/cn';
+import { SidebarTeamsSection } from '@/features/teams/sidebar-teams-section';
 
 interface SidebarSectionProps {
   title: string;
@@ -41,7 +42,7 @@ export function Sidebar(): JSX.Element {
       <div className="overflow-y-auto">
         <SidebarSection title="Folders" icon={FolderIcon} />
         <SidebarSection title="DMs" icon={MessageSquareIcon} />
-        <SidebarSection title="Groups" icon={UsersIcon} />
+        <SidebarTeamsSection />
       </div>
     </aside>
   );

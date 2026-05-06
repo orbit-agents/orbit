@@ -37,6 +37,11 @@ function reset(): void {
     draggingAgentId: null,
     memoriesByAgent: {},
     recentlyAddedMemoryIds: {},
+    interAgentMessagesByAgent: {},
+    inFlightMessages: {},
+    teams: {},
+    orderedTeamIds: [],
+    focusedTeamId: null,
   });
 }
 
@@ -347,6 +352,68 @@ describe('agents store / Phase 3 identity + memory', () => {
     ]);
     useAgentsStore.getState().removeAgent('a');
     expect(useAgentsStore.getState().memoriesByAgent['a']).toBeUndefined();
+  });
+});
+
+describe('agents store / Phase 5 teams', () => {
+  beforeEach(reset);
+
+  function team(id: string, name = id) {
+    return {
+      id,
+      name,
+      color: '#3a4a3e',
+      hintX: null,
+      hintY: null,
+      hintWidth: null,
+      hintHeight: null,
+      createdAt: '2026-05-06T00:00:00Z',
+      updatedAt: '2026-05-06T00:00:00Z',
+    };
+  }
+
+  it('hydrateTeams replaces the team set and preserves order', () => {
+    useAgentsStore.getState().hydrateTeams([team('a'), team('b'), team('c')]);
+    expect(useAgentsStore.getState().orderedTeamIds).toEqual(['a', 'b', 'c']);
+    expect(Object.keys(useAgentsStore.getState().teams)).toHaveLength(3);
+  });
+
+  it('upsertTeam appends new ids and replaces in place on conflict', () => {
+    useAgentsStore.getState().hydrateTeams([team('a')]);
+    useAgentsStore.getState().upsertTeam(team('b'));
+    expect(useAgentsStore.getState().orderedTeamIds).toEqual(['a', 'b']);
+    useAgentsStore.getState().upsertTeam(team('a', 'A renamed'));
+    expect(useAgentsStore.getState().orderedTeamIds).toEqual(['a', 'b']);
+    expect(useAgentsStore.getState().teams['a']?.name).toBe('A renamed');
+  });
+
+  it('removeTeam drops the row and clears teamId from members', () => {
+    useAgentsStore.getState().hydrate([makeAgent('x'), makeAgent('y')]);
+    useAgentsStore.getState().hydrateTeams([team('t1')]);
+    useAgentsStore.getState().setAgentTeam('x', 't1');
+    useAgentsStore.getState().setAgentTeam('y', 't1');
+    expect(useAgentsStore.getState().agents['x']?.teamId).toBe('t1');
+    useAgentsStore.getState().removeTeam('t1');
+    expect(useAgentsStore.getState().teams['t1']).toBeUndefined();
+    expect(useAgentsStore.getState().agents['x']?.teamId).toBeNull();
+    expect(useAgentsStore.getState().agents['y']?.teamId).toBeNull();
+  });
+
+  it('setAgentTeam updates teamId and tolerates missing agents', () => {
+    useAgentsStore.getState().upsertAgent(makeAgent('a'));
+    useAgentsStore.getState().setAgentTeam('a', 't1');
+    expect(useAgentsStore.getState().agents['a']?.teamId).toBe('t1');
+    useAgentsStore.getState().setAgentTeam('a', null);
+    expect(useAgentsStore.getState().agents['a']?.teamId).toBeNull();
+    // No-op for a missing agent.
+    useAgentsStore.getState().setAgentTeam('ghost', 't1');
+  });
+
+  it('focusTeam sets and clears the focus marker', () => {
+    useAgentsStore.getState().focusTeam('t1');
+    expect(useAgentsStore.getState().focusedTeamId).toBe('t1');
+    useAgentsStore.getState().focusTeam(null);
+    expect(useAgentsStore.getState().focusedTeamId).toBeNull();
   });
 });
 

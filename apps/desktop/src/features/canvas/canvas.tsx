@@ -16,7 +16,8 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { cn } from '@/lib/cn';
 import { useAgentsStore, deriveStatus, type XY } from '@/stores/agents';
 import { useUiStore } from '@/stores/ui-store';
-import { ipcAgentTerminate, ipcAgentUpdatePosition } from '@/lib/ipc';
+import { ipcAgentSetTeam, ipcAgentTerminate, ipcAgentUpdatePosition } from '@/lib/ipc';
+import { buildTeamRegions, findTeamAtPoint, NODE_CENTER_OFFSET } from './team-bounds';
 import type { Agent, Message } from '@orbit/types';
 import { nodeTypes } from './node-types';
 import type { AgentNodeData } from './nodes/agent-node';
@@ -24,6 +25,7 @@ import { EmptyCanvasPrompt } from './empty-canvas-prompt';
 import { CanvasToolbar } from './canvas-toolbar';
 import { AgentCountPill } from './agent-count-pill';
 import { MessageFlightLayer } from './message-flight-layer';
+import { TeamRegionLayer } from './team-region-layer';
 import { useCanvasShortcuts } from './use-canvas-shortcuts';
 import { AgentContextMenu, type AgentContextMenuAction } from './agent-context-menu';
 
@@ -51,6 +53,10 @@ function CanvasInner({ onRequestSpawn }: Props): JSX.Element {
   const updateAgentPosition = useAgentsStore((s) => s.updateAgentPosition);
   const selectAgent = useAgentsStore((s) => s.selectAgent);
   const setDraggingAgent = useAgentsStore((s) => s.setDraggingAgent);
+  const teams = useAgentsStore((s) => s.teams);
+  const orderedTeamIds = useAgentsStore((s) => s.orderedTeamIds);
+  const setAgentTeam = useAgentsStore((s) => s.setAgentTeam);
+  const allAgents = useAgentsStore((s) => s.agents);
 
   const flow = useReactFlow<Node<AgentNodeData>>();
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -160,12 +166,35 @@ function CanvasInner({ onRequestSpawn }: Props): JSX.Element {
       setDraggingAgent(null);
       // Persist the final position to the DB.
       void ipcAgentUpdatePosition(node.id, sx, sy).catch((e) => {
-        // Soft failure — the in-memory position is already correct; the
-        // next drag or restart will retry.
         console.warn('failed to persist agent position', e);
       });
+
+      // Phase 5: drag-into-team hit test. Compute regions excluding
+      // this agent's contribution to avoid the trivial self-match,
+      // then test the agent's *center* against the remaining regions.
+      const others = { ...allAgents };
+      const moved = others[node.id];
+      if (moved) {
+        // Use the post-snap position so the hit test matches what the
+        // user actually sees on the next render.
+        others[node.id] = { ...moved, positionX: sx, positionY: sy };
+      }
+      const regions = buildTeamRegions(orderedTeamIds, teams, others);
+      const center = {
+        x: sx + NODE_CENTER_OFFSET.x,
+        y: sy + NODE_CENTER_OFFSET.y,
+      };
+      const hit = findTeamAtPoint(regions, center);
+      const currentTeamId = moved?.teamId ?? null;
+      const nextTeamId = hit?.id ?? null;
+      if (nextTeamId !== currentTeamId) {
+        setAgentTeam(node.id, nextTeamId);
+        void ipcAgentSetTeam(node.id, nextTeamId).catch((e) => {
+          console.warn('failed to persist team membership', e);
+        });
+      }
     },
-    [updateAgentPosition, setDraggingAgent],
+    [updateAgentPosition, setDraggingAgent, allAgents, orderedTeamIds, teams, setAgentTeam],
   );
 
   const onNodeClick = useCallback<NodeMouseHandler>(
@@ -280,6 +309,7 @@ function CanvasInner({ onRequestSpawn }: Props): JSX.Element {
         />
       </ReactFlow>
       {isEmpty ? <EmptyCanvasPrompt /> : null}
+      <TeamRegionLayer />
       <MessageFlightLayer />
       <AgentCountPill />
       <CanvasToolbar />
