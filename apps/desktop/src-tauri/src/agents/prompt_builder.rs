@@ -33,7 +33,10 @@ pub struct SystemPromptBuilder {
     pub other_agents: Vec<AgentSummary>,
 }
 
-#[allow(dead_code)]
+/// Lightweight handle to another agent in the same map. Phase 4 uses
+/// these to populate the system-prompt addendum that lists currently-
+/// running teammates so the model knows valid `<send_to>` recipient
+/// names.
 pub struct AgentSummary {
     pub name: String,
     pub purpose_one_liner: String,
@@ -95,13 +98,31 @@ impl SystemPromptBuilder {
         out.push_str("- Be concise. Match the user's level of detail.\n");
         out.push_str("- When unsure, ask rather than assume.\n");
 
+        if !self.other_agents.is_empty() {
+            out.push_str("\n## Your teammates\n");
+            out.push_str(
+                "Other agents are working alongside you in this map. You can route a message to \
+                 any of them with the `send_message_to_agent` tool documented below.\n\n",
+            );
+            for teammate in &self.other_agents {
+                let purpose = if teammate.purpose_one_liner.trim().is_empty() {
+                    "(no stated purpose)"
+                } else {
+                    teammate.purpose_one_liner.as_str()
+                };
+                out.push_str(&format!("- {} — {}\n", teammate.name, purpose));
+            }
+        }
+
         out.push_str("\n## Available tools\n");
         out.push_str(
             "You have access to Claude Code's standard tools (Read, Edit, Bash, Glob, Grep, \
-             etc.) plus Orbit-specific tools (`remember` documented above).\n",
+             etc.) plus Orbit-specific tools (`remember` and `send_message_to_agent` \
+             documented below).\n",
         );
 
         out.push_str(REMEMBER_TOOL_PROTOCOL);
+        out.push_str(SEND_TO_TOOL_PROTOCOL);
 
         out
     }
@@ -149,6 +170,29 @@ shows them in the UI immediately. Use one tag per memory entry. Keep
 entries short, specific, and second-person ("table is named usres not
 users", "user prefers concise summaries"). Do not narrate that you are
 saving — just emit the tag.
+"#;
+
+/// Phase 4: protocol instructions for the `send_message_to_agent`
+/// pseudo-tool. Documented as part of the system prompt; parsed by
+/// `agents::extract` after a turn completes. See ADR 0006.
+const SEND_TO_TOOL_PROTOCOL: &str = r#"
+
+### Using send_message_to_agent
+To message a teammate, emit a line on its own in this exact form
+(again — entire line, nothing else before or after):
+
+<send_to agent="Atlas">tell Atlas to handle the migration</send_to>
+
+The `agent` attribute names a teammate from the "Your teammates"
+section above (case-insensitive). The Orbit broker validates the
+recipient, persists an audit row, and delivers the message as a
+synthetic user turn to that agent. You will not receive a direct
+reply — the recipient handles the request on its own thread.
+
+Use this when the work clearly belongs to another role and you'd
+otherwise be guessing outside your scope. Don't chain multiple sends
+in a single turn unless they're truly independent — Orbit caps loop
+depth at 8.
 "#;
 
 #[cfg(test)]

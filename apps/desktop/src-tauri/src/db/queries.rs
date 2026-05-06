@@ -5,7 +5,10 @@
 use chrono::{DateTime, Utc};
 use sqlx::SqlitePool;
 
-use super::models::{Agent, Conversation, MemoryEntry, MemorySource, Message, MessageRole};
+use super::models::{
+    Agent, Conversation, InterAgentMessage, InterAgentMessageStatus, MemoryEntry, MemorySource,
+    Message, MessageRole,
+};
 use super::DbError;
 
 pub struct NewAgent<'a> {
@@ -368,6 +371,116 @@ pub async fn recent_memory_entries(
     Ok(rows)
 }
 
+// ─── Phase 4: inter-agent messages ────────────────────────────────────────
+
+pub struct NewInterAgentMessage<'a> {
+    pub id: &'a str,
+    pub from_agent_id: &'a str,
+    pub to_agent_id: &'a str,
+    pub content: &'a str,
+    pub origin_human_message_id: Option<&'a str>,
+    pub depth: i64,
+}
+
+/// Insert a new inter-agent message in `pending` state. The broker
+/// flips the status to `delivered` (or `failed`) once dispatch
+/// happens, with `mark_inter_agent_message_delivered` /
+/// `mark_inter_agent_message_failed`.
+pub async fn insert_inter_agent_message(
+    pool: &SqlitePool,
+    new: NewInterAgentMessage<'_>,
+) -> Result<InterAgentMessage, DbError> {
+    let now = Utc::now();
+    sqlx::query(
+        "INSERT INTO inter_agent_messages
+            (id, from_agent_id, to_agent_id, content, origin_human_message_id,
+             depth, status, created_at, delivered_at)
+         VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, NULL)",
+    )
+    .bind(new.id)
+    .bind(new.from_agent_id)
+    .bind(new.to_agent_id)
+    .bind(new.content)
+    .bind(new.origin_human_message_id)
+    .bind(new.depth)
+    .bind(now)
+    .execute(pool)
+    .await?;
+    Ok(InterAgentMessage {
+        id: new.id.to_string(),
+        from_agent_id: new.from_agent_id.to_string(),
+        to_agent_id: new.to_agent_id.to_string(),
+        content: new.content.to_string(),
+        origin_human_message_id: new.origin_human_message_id.map(|s| s.to_string()),
+        depth: new.depth,
+        status: InterAgentMessageStatus::Pending.as_str().to_string(),
+        created_at: now,
+        delivered_at: None,
+    })
+}
+
+pub async fn update_inter_agent_message_status(
+    pool: &SqlitePool,
+    id: &str,
+    status: InterAgentMessageStatus,
+) -> Result<(), DbError> {
+    let now = Utc::now();
+    let delivered = matches!(
+        status,
+        InterAgentMessageStatus::Delivered | InterAgentMessageStatus::Acknowledged
+    );
+    if delivered {
+        sqlx::query("UPDATE inter_agent_messages SET status = ?, delivered_at = ? WHERE id = ?")
+            .bind(status.as_str())
+            .bind(now)
+            .bind(id)
+            .execute(pool)
+            .await?;
+    } else {
+        sqlx::query("UPDATE inter_agent_messages SET status = ? WHERE id = ?")
+            .bind(status.as_str())
+            .bind(id)
+            .execute(pool)
+            .await?;
+    }
+    Ok(())
+}
+
+/// All inter-agent messages either to or from the given agent, newest first.
+pub async fn list_inter_agent_messages_for_agent(
+    pool: &SqlitePool,
+    agent_id: &str,
+    limit: i64,
+) -> Result<Vec<InterAgentMessage>, DbError> {
+    let rows = sqlx::query_as::<_, InterAgentMessage>(
+        "SELECT * FROM inter_agent_messages
+         WHERE from_agent_id = ? OR to_agent_id = ?
+         ORDER BY created_at DESC
+         LIMIT ?",
+    )
+    .bind(agent_id)
+    .bind(agent_id)
+    .bind(limit)
+    .fetch_all(pool)
+    .await?;
+    Ok(rows)
+}
+
+/// Audit log across the whole system. Useful for debugging and the
+/// future Phase 7 status report view.
+pub async fn list_inter_agent_audit_log(
+    pool: &SqlitePool,
+    limit: i64,
+) -> Result<Vec<InterAgentMessage>, DbError> {
+    let rows = sqlx::query_as::<_, InterAgentMessage>(
+        "SELECT * FROM inter_agent_messages ORDER BY created_at DESC LIMIT ?",
+    )
+    .bind(limit)
+    .fetch_all(pool)
+    .await?;
+    Ok(rows)
+}
+
 pub async fn list_messages_for_agent(
     pool: &SqlitePool,
     agent_id: &str,
@@ -665,6 +778,77 @@ mod tests {
 
         delete_agent(&pool, "a").await.unwrap();
         let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM memory_entries")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(count.0, 0);
+    }
+
+    #[tokio::test]
+    async fn inter_agent_message_lifecycle_and_audit_log() {
+        let pool = memory_pool().await;
+        insert_test_agent(&pool, "a").await;
+        insert_test_agent(&pool, "b").await;
+
+        let m = insert_inter_agent_message(
+            &pool,
+            NewInterAgentMessage {
+                id: "iam-1",
+                from_agent_id: "a",
+                to_agent_id: "b",
+                content: "hi from A",
+                origin_human_message_id: None,
+                depth: 1,
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(m.status, "pending");
+        assert!(m.delivered_at.is_none());
+
+        update_inter_agent_message_status(&pool, "iam-1", InterAgentMessageStatus::Delivered)
+            .await
+            .unwrap();
+        let after = &list_inter_agent_messages_for_agent(&pool, "b", 10)
+            .await
+            .unwrap()[0];
+        assert_eq!(after.status, "delivered");
+        assert!(after.delivered_at.is_some());
+
+        // Both endpoints see the row.
+        assert_eq!(
+            list_inter_agent_messages_for_agent(&pool, "a", 10)
+                .await
+                .unwrap()
+                .len(),
+            1
+        );
+        assert_eq!(
+            list_inter_agent_audit_log(&pool, 10).await.unwrap().len(),
+            1
+        );
+    }
+
+    #[tokio::test]
+    async fn deleting_agent_cascades_inter_agent_messages() {
+        let pool = memory_pool().await;
+        insert_test_agent(&pool, "a").await;
+        insert_test_agent(&pool, "b").await;
+        insert_inter_agent_message(
+            &pool,
+            NewInterAgentMessage {
+                id: "iam-1",
+                from_agent_id: "a",
+                to_agent_id: "b",
+                content: "hi",
+                origin_human_message_id: None,
+                depth: 1,
+            },
+        )
+        .await
+        .unwrap();
+        delete_agent(&pool, "a").await.unwrap();
+        let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM inter_agent_messages")
             .fetch_one(&pool)
             .await
             .unwrap();

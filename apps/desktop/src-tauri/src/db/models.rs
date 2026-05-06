@@ -13,6 +13,7 @@ pub type AgentId = String;
 pub type ConversationId = String;
 pub type MessageId = String;
 pub type MemoryEntryId = String;
+pub type InterAgentMessageId = String;
 
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
 #[serde(rename_all = "camelCase")]
@@ -131,6 +132,51 @@ pub struct MemoryEntry {
     pub source: String,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+}
+
+/// Status of a message routed through the broker.
+///
+/// `pending` — written to DB, not yet handed to the recipient's mpsc.
+/// `delivered` — pushed onto the recipient's queue.
+/// `acknowledged` — recipient's next turn has consumed the message.
+/// `failed` — broker rejected (loop guard, unknown recipient, etc.).
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum InterAgentMessageStatus {
+    Pending,
+    Delivered,
+    Acknowledged,
+    Failed,
+}
+
+impl InterAgentMessageStatus {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Pending => "pending",
+            Self::Delivered => "delivered",
+            Self::Acknowledged => "acknowledged",
+            Self::Failed => "failed",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+#[serde(rename_all = "camelCase")]
+pub struct InterAgentMessage {
+    pub id: InterAgentMessageId,
+    pub from_agent_id: AgentId,
+    pub to_agent_id: AgentId,
+    pub content: String,
+    /// The human-sent message id that ultimately triggered this chain.
+    /// `None` for broker invocations outside any human turn.
+    pub origin_human_message_id: Option<MessageId>,
+    /// 1 = direct reply to a human-triggered turn; increments per hop.
+    /// The broker rejects messages with depth > MAX_DEPTH.
+    pub depth: i64,
+    /// "pending" | "delivered" | "acknowledged" | "failed".
+    pub status: String,
+    pub created_at: DateTime<Utc>,
+    pub delivered_at: Option<DateTime<Utc>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]

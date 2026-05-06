@@ -11,8 +11,9 @@ use std::sync::Arc;
 use sqlx::SqlitePool;
 
 use crate::agents::engine::{AgentEngine, SpawnConfig};
-use crate::agents::prompt_builder::{SystemPromptBuilder, MEMORY_INJECTION_CAP};
+use crate::agents::prompt_builder::{AgentSummary, SystemPromptBuilder, MEMORY_INJECTION_CAP};
 use crate::agents::supervisor::SharedSupervisor;
+use crate::broker::SharedBroker;
 use crate::db::queries;
 
 /// Everything IPC commands need to talk to the world.
@@ -21,6 +22,7 @@ pub struct AppState {
     pub pool: SqlitePool,
     pub engine: Arc<dyn AgentEngine>,
     pub supervisor: SharedSupervisor,
+    pub broker: SharedBroker,
     pub data_dir: PathBuf,
 }
 
@@ -35,7 +37,7 @@ pub async fn rehydrate_agents(
     engine: &dyn AgentEngine,
 ) -> Result<(), crate::db::DbError> {
     let agents = queries::list_agents(pool).await?;
-    for agent in agents {
+    for agent in &agents {
         let working_dir = PathBuf::from(&agent.working_dir);
         if !working_dir.exists() {
             tracing::warn!(
@@ -57,13 +59,26 @@ pub async fn rehydrate_agents(
         let memory = queries::recent_memory_entries(pool, &agent.id, MEMORY_INJECTION_CAP as i64)
             .await
             .unwrap_or_default();
+        let other_agents = agents
+            .iter()
+            .filter(|a| a.id != agent.id)
+            .map(|a| AgentSummary {
+                name: a.name.clone(),
+                purpose_one_liner: a
+                    .purpose
+                    .as_deref()
+                    .and_then(|p| p.lines().map(str::trim).find(|l| !l.is_empty()))
+                    .unwrap_or("")
+                    .to_string(),
+            })
+            .collect();
         let prompt = SystemPromptBuilder {
             agent_name: agent.name.clone(),
             working_dir: working_dir.clone(),
             soul: agent.soul.clone(),
             purpose: agent.purpose.clone(),
             memory,
-            other_agents: vec![],
+            other_agents,
         }
         .build();
 

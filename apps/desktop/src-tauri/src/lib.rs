@@ -23,6 +23,7 @@ use tracing_subscriber::EnvFilter;
 
 use crate::agents::claude_code::ClaudeCodeEngine;
 use crate::agents::supervisor::Supervisor;
+use crate::broker::Broker;
 use crate::core::AppState;
 
 const DB_FILENAME: &str = "orbit.db";
@@ -50,6 +51,8 @@ pub fn run() {
             ipc::commands::memory_create,
             ipc::commands::memory_update,
             ipc::commands::memory_delete,
+            ipc::commands::agent_get_inter_agent_messages,
+            ipc::commands::agent_get_audit_log,
             ipc::commands::system_health_check,
         ])
         .setup(|app| {
@@ -67,6 +70,7 @@ pub fn run() {
             let supervisor = Arc::new(Supervisor::default());
             let engine: Arc<dyn crate::agents::engine::AgentEngine> =
                 Arc::new(ClaudeCodeEngine::new());
+            let broker = Arc::new(Broker::new(pool.clone()));
 
             // Rehydrate persisted agents best-effort so users find their
             // conversations alive after a restart.
@@ -84,6 +88,7 @@ pub fn run() {
                 pool,
                 engine,
                 supervisor,
+                broker,
                 data_dir: data_dir.clone(),
             };
             app.manage(state);
