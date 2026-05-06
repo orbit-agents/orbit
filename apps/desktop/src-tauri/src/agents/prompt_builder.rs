@@ -46,14 +46,21 @@ const DEFAULT_PURPOSE: &str =
     "Help with engineering tasks in the assigned working directory. Ask clarifying questions \
      when requirements are ambiguous.";
 
+/// Empty or whitespace-only strings count as "not set" so the user can
+/// clear a textarea to revert to defaults instead of getting a prompt
+/// with a literal empty Soul/Purpose section.
+fn non_blank(s: Option<&str>) -> Option<&str> {
+    s.filter(|v| !v.trim().is_empty())
+}
+
 impl SystemPromptBuilder {
     /// Build the full system prompt. Memory is rendered most-recent-first
     /// and capped at `MEMORY_INJECTION_CAP` entries; if `memory` is empty
     /// the entire "What you remember" section is omitted (don't lie to
     /// the model about a memory it doesn't have).
     pub fn build(&self) -> String {
-        let soul = self.soul.as_deref().unwrap_or(DEFAULT_SOUL);
-        let purpose = self.purpose.as_deref().unwrap_or(DEFAULT_PURPOSE);
+        let soul = non_blank(self.soul.as_deref()).unwrap_or(DEFAULT_SOUL);
+        let purpose = non_blank(self.purpose.as_deref()).unwrap_or(DEFAULT_PURPOSE);
 
         let mut out = String::with_capacity(1024);
         out.push_str(&format!(
@@ -104,8 +111,8 @@ impl SystemPromptBuilder {
     /// UI. Re-sending the full prompt would confuse the model in mid-
     /// conversation; this block is short and explicit.
     pub fn build_update_block(&self) -> String {
-        let soul = self.soul.as_deref().unwrap_or(DEFAULT_SOUL);
-        let purpose = self.purpose.as_deref().unwrap_or(DEFAULT_PURPOSE);
+        let soul = non_blank(self.soul.as_deref()).unwrap_or(DEFAULT_SOUL);
+        let purpose = non_blank(self.purpose.as_deref()).unwrap_or(DEFAULT_PURPOSE);
 
         let mut out = String::with_capacity(512);
         out.push_str("<system_update>\n");
@@ -179,6 +186,27 @@ mod tests {
         assert!(p.contains(DEFAULT_PURPOSE));
         // No memory section when memory is empty.
         assert!(!p.contains("## What you remember"));
+    }
+
+    #[test]
+    fn empty_or_whitespace_soul_and_purpose_fall_back_to_defaults() {
+        // Cleared textareas (and whitespace-only ones) should revert
+        // the agent to the default persona instead of producing a prompt
+        // with a literal blank Soul/Purpose.
+        let mut b = builder();
+        b.soul = Some(String::new());
+        b.purpose = Some("   \n\t".to_string());
+        let p = b.build();
+        assert!(p.contains(DEFAULT_SOUL), "expected default soul, got: {p}");
+        assert!(
+            p.contains(DEFAULT_PURPOSE),
+            "expected default purpose, got: {p}"
+        );
+
+        // Same rule applies to the in-band update block.
+        let block = b.build_update_block();
+        assert!(block.contains(DEFAULT_SOUL));
+        assert!(block.contains(DEFAULT_PURPOSE));
     }
 
     #[test]

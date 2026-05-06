@@ -45,7 +45,7 @@ React Flow canvas with multiple agent nodes; each agent is an independent Claude
 14. **Cmd/Ctrl+Shift+N.** Opens the spawn dialog at the viewport center.
 15. **Cross-platform.** Same flow on macOS, Windows, and Linux.
 
-## Phase 3 — Agent identity + memory · _In Progress_
+## Phase 3 — Agent identity + memory · _Complete_
 
 Soul / Purpose / Memory fields on the agent. System prompt built by templating these three plus global context. Memory is persistent, editable by the human, and writable by the agent itself via a `<remember>` pseudo-tool.
 

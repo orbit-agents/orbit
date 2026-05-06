@@ -21,13 +21,12 @@ export function AgentCountPill(): JSX.Element | null {
       className={cn(
         // Sits just above the floating CanvasToolbar (which is ~280px
         // tall with 7 buttons + 2 separators + padding).
-        'absolute right-4 flex items-center gap-2',
+        'absolute right-4 bottom-[300px] flex items-center gap-2',
         'rounded-input border px-3 py-1 text-11 shadow-card',
         atLimit
           ? 'border-status-waiting/40 bg-status-waiting/10 text-status-waiting'
           : 'border-border-subtle bg-elevated text-text-secondary',
       )}
-      style={{ bottom: '300px' }}
       role="status"
     >
       <span aria-hidden className="font-medium">
