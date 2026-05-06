@@ -1,9 +1,9 @@
 import { create } from 'zustand';
 
-export type RightPanelTab = 'chat' | 'settings' | 'diff';
+export type RightPanelTab = 'chat' | 'settings' | 'diff' | 'terminal';
 
-/** Phase 7: which view occupies the center pane. */
-export type CenterView = 'canvas' | 'task-inbox';
+/** Phase 7+8: which view occupies the center pane. */
+export type CenterView = 'canvas' | 'task-inbox' | 'group-chat' | 'mcp-settings';
 
 interface UiState {
   sidebarOpen: boolean;

@@ -2,6 +2,8 @@ import { create } from 'zustand';
 import type {
   Agent,
   AgentEvent,
+  GroupMessage,
+  GroupThread,
   InterAgentMessage,
   MemoryEntry,
   Message,
@@ -17,6 +19,8 @@ export type InterAgentMessageId = string;
 export type TeamId = string;
 export type TaskId = string;
 export type StickyNoteId = string;
+export type GroupThreadId = string;
+export type GroupMessageId = string;
 
 export interface XY {
   x: number;
@@ -96,6 +100,15 @@ interface AgentsState {
    *  annotations. Keyed by id for O(1) updates from events. */
   stickyNotes: Record<StickyNoteId, StickyNote>;
 
+  /** Phase 8: group threads (multi-agent + human chats). Order is
+   *  insertion order. Messages keyed by thread id, members similarly. */
+  groupThreads: Record<GroupThreadId, GroupThread>;
+  orderedGroupThreadIds: GroupThreadId[];
+  groupMessagesByThread: Record<GroupThreadId, GroupMessage[]>;
+  groupMembersByThread: Record<GroupThreadId, AgentId[]>;
+  /** When set, the center pane shows this thread's chat. */
+  selectedGroupThreadId: GroupThreadId | null;
+
   hydrate: (agents: Agent[]) => void;
   upsertAgent: (agent: Agent) => void;
   removeAgent: (agentId: AgentId) => void;
@@ -126,6 +139,14 @@ interface AgentsState {
   hydrateStickyNotes: (notes: StickyNote[]) => void;
   upsertStickyNote: (note: StickyNote) => void;
   removeStickyNote: (noteId: StickyNoteId) => void;
+
+  hydrateGroupThreads: (threads: GroupThread[]) => void;
+  upsertGroupThread: (thread: GroupThread) => void;
+  removeGroupThread: (threadId: GroupThreadId) => void;
+  setGroupMessages: (threadId: GroupThreadId, messages: GroupMessage[]) => void;
+  appendGroupMessage: (message: GroupMessage) => void;
+  setGroupMembers: (threadId: GroupThreadId, agentIds: AgentId[]) => void;
+  selectGroupThread: (threadId: GroupThreadId | null) => void;
 
   setMessages: (agentId: AgentId, messages: Message[]) => void;
   appendPersistedMessage: (agentId: AgentId, message: Message) => void;
@@ -160,6 +181,11 @@ export const useAgentsStore = create<AgentsState>((set, get) => ({
   focusedTeamId: null,
   tasksByAgent: {},
   stickyNotes: {},
+  groupThreads: {},
+  orderedGroupThreadIds: [],
+  groupMessagesByThread: {},
+  groupMembersByThread: {},
+  selectedGroupThreadId: null,
 
   hydrate: (agents) =>
     set(() => {
@@ -454,6 +480,69 @@ export const useAgentsStore = create<AgentsState>((set, get) => ({
       const { [noteId]: _gone, ...rest } = s.stickyNotes;
       return { stickyNotes: rest };
     }),
+
+  hydrateGroupThreads: (threads) =>
+    set(() => {
+      const map: Record<GroupThreadId, GroupThread> = {};
+      const order: GroupThreadId[] = [];
+      for (const t of threads) {
+        map[t.id] = t;
+        order.push(t.id);
+      }
+      return { groupThreads: map, orderedGroupThreadIds: order };
+    }),
+
+  upsertGroupThread: (thread) =>
+    set((s) => {
+      const order = s.orderedGroupThreadIds.includes(thread.id)
+        ? s.orderedGroupThreadIds
+        : [...s.orderedGroupThreadIds, thread.id];
+      return {
+        groupThreads: { ...s.groupThreads, [thread.id]: thread },
+        orderedGroupThreadIds: order,
+      };
+    }),
+
+  removeGroupThread: (threadId) =>
+    set((s) => {
+      const { [threadId]: _gone, ...rest } = s.groupThreads;
+      const { [threadId]: _msgs, ...restMsgs } = s.groupMessagesByThread;
+      const { [threadId]: _members, ...restMembers } = s.groupMembersByThread;
+      return {
+        groupThreads: rest,
+        orderedGroupThreadIds: s.orderedGroupThreadIds.filter((id) => id !== threadId),
+        groupMessagesByThread: restMsgs,
+        groupMembersByThread: restMembers,
+        selectedGroupThreadId:
+          s.selectedGroupThreadId === threadId ? null : s.selectedGroupThreadId,
+      };
+    }),
+
+  setGroupMessages: (threadId, messages) =>
+    set((s) => ({
+      groupMessagesByThread: { ...s.groupMessagesByThread, [threadId]: messages },
+    })),
+
+  appendGroupMessage: (message) =>
+    set((s) => {
+      const list = s.groupMessagesByThread[message.threadId] ?? [];
+      // Idempotent on duplicate ids — local optimistic insert can
+      // race the event for the same row.
+      if (list.some((m) => m.id === message.id)) return s;
+      return {
+        groupMessagesByThread: {
+          ...s.groupMessagesByThread,
+          [message.threadId]: [...list, message],
+        },
+      };
+    }),
+
+  setGroupMembers: (threadId, agentIds) =>
+    set((s) => ({
+      groupMembersByThread: { ...s.groupMembersByThread, [threadId]: agentIds },
+    })),
+
+  selectGroupThread: (threadId) => set(() => ({ selectedGroupThreadId: threadId })),
 
   applyEvent: (agentId, event) => {
     const current = get().streamingByAgent[agentId] ?? null;

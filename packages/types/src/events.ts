@@ -155,6 +155,65 @@ export interface StickyNoteDeletedPayload {
   noteId: string;
 }
 
+/** Phase 8: group thread (multiple agents + the human). */
+export interface GroupThread {
+  id: string;
+  name: string;
+  color: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface GroupThreadMember {
+  threadId: string;
+  agentId: string;
+  addedAt: string;
+}
+
+export interface GroupMessage {
+  id: string;
+  threadId: string;
+  /** `'human' | 'agent'` */
+  senderKind: string;
+  senderAgentId: string | null;
+  content: string;
+  createdAt: string;
+}
+
+export interface GroupMessageAppendedPayload {
+  message: GroupMessage;
+}
+
+export interface GroupThreadUpdatedPayload {
+  threadId: string;
+}
+
+/** Phase 8: external MCP server configuration. */
+export interface McpServer {
+  id: string;
+  name: string;
+  /** `'stdio' | 'http'` */
+  transport: string;
+  command: string | null;
+  argsJson: string;
+  envJson: string;
+  url: string | null;
+  isDefault: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** Phase 8: PTY data chunk emitted to the frontend. */
+export interface TerminalDataPayload {
+  agentId: string;
+  chunk: string;
+}
+
+export interface TerminalExitPayload {
+  agentId: string;
+  reason: string;
+}
+
 /** Phase 7: chronological activity feed entry. */
 export interface ActivityEntry {
   kind: string;
@@ -221,3 +280,7 @@ export const EVENT_AGENT_TASK_DELETED = 'agent:task_deleted' as const;
 export const EVENT_STICKY_NOTE_CREATED = 'sticky_note:created' as const;
 export const EVENT_STICKY_NOTE_UPDATED = 'sticky_note:updated' as const;
 export const EVENT_STICKY_NOTE_DELETED = 'sticky_note:deleted' as const;
+export const EVENT_GROUP_MESSAGE_APPENDED = 'group:message_appended' as const;
+export const EVENT_GROUP_THREAD_UPDATED = 'group:thread_updated' as const;
+export const EVENT_TERMINAL_DATA = 'terminal:data' as const;
+export const EVENT_TERMINAL_EXIT = 'terminal:exit' as const;

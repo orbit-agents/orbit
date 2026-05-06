@@ -4,12 +4,14 @@ import { useAgentsStore } from '@/stores/agents';
 import { AgentChatPanel } from './agent-chat-panel';
 import { AgentSettingsPanel } from './agent-settings-panel';
 import { AgentDiffPanel } from './diff/agent-diff-panel';
+import { AgentTerminalPanel } from './terminal/agent-terminal-panel';
 import { IdentityPendingPill } from './identity/identity-pending-pill';
 
 const TABS: { id: RightPanelTab; label: string }[] = [
   { id: 'chat', label: 'Chat' },
   { id: 'settings', label: 'Settings' },
   { id: 'diff', label: 'Diff' },
+  { id: 'terminal', label: 'Terminal' },
 ];
 
 /**
@@ -59,6 +61,8 @@ export function AgentDetailPanel(): JSX.Element {
           <AgentChatPanel />
         ) : tab === 'diff' ? (
           <AgentDiffPanel />
+        ) : tab === 'terminal' ? (
+          <AgentTerminalPanel />
         ) : (
           <AgentSettingsPanel />
         )}

@@ -10,12 +10,20 @@ import { AgentDetailPanel } from '@/features/agents/agent-detail-panel';
 import { SystemHealthSetupView } from '@/features/agents/system-health-banner';
 import { Canvas } from '@/features/canvas/canvas';
 import { TaskInbox } from '@/features/tasks/task-inbox';
+import { GroupChatView } from '@/features/groups/group-chat-view';
+import { McpSettingsView } from '@/features/mcp/mcp-settings-view';
 import type { XY } from '@/stores/agents';
 import { useKeyboardShortcut } from '@/hooks/use-keyboard-shortcut';
 import { useAgentEvents } from '@/hooks/use-agent-events';
 import { useUiStore } from '@/stores/ui-store';
 import { useAgentsStore } from '@/stores/agents';
-import { ipcAgentList, ipcStickyNoteList, ipcSystemHealthCheck, ipcTeamList } from '@/lib/ipc';
+import {
+  ipcAgentList,
+  ipcGroupThreadList,
+  ipcStickyNoteList,
+  ipcSystemHealthCheck,
+  ipcTeamList,
+} from '@/lib/ipc';
 import { cn } from '@/lib/cn';
 
 function ResizeHandle(): JSX.Element {
@@ -54,6 +62,7 @@ export function App(): JSX.Element {
   const hydrate = useAgentsStore((s) => s.hydrate);
   const hydrateTeams = useAgentsStore((s) => s.hydrateTeams);
   const hydrateStickyNotes = useAgentsStore((s) => s.hydrateStickyNotes);
+  const hydrateGroupThreads = useAgentsStore((s) => s.hydrateGroupThreads);
   const [spawnOpen, setSpawnOpen] = useState(false);
   const [spawnPosition, setSpawnPosition] = useState<XY | null>(null);
 
@@ -97,6 +106,16 @@ export function App(): JSX.Element {
       const notes = await ipcStickyNoteList();
       hydrateStickyNotes(notes);
       return notes;
+    },
+  });
+
+  useQuery({
+    queryKey: ['group-threads'],
+    enabled: Boolean(health.data?.engine.available && health.data?.engine.authenticated),
+    queryFn: async () => {
+      const threads = await ipcGroupThreadList();
+      hydrateGroupThreads(threads);
+      return threads;
     },
   });
 
@@ -144,6 +163,10 @@ export function App(): JSX.Element {
         <Panel defaultSize={rightPanelOpen ? 58 : 82} minSize={30}>
           {centerView === 'task-inbox' ? (
             <TaskInbox />
+          ) : centerView === 'group-chat' ? (
+            <GroupChatView />
+          ) : centerView === 'mcp-settings' ? (
+            <McpSettingsView />
           ) : canvasOpen ? (
             <Canvas onRequestSpawn={openSpawnDialog} />
           ) : (

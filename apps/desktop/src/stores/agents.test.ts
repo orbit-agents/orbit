@@ -49,6 +49,11 @@ function reset(): void {
     focusedTeamId: null,
     tasksByAgent: {},
     stickyNotes: {},
+    groupThreads: {},
+    orderedGroupThreadIds: [],
+    groupMessagesByThread: {},
+    groupMembersByThread: {},
+    selectedGroupThreadId: null,
   });
 }
 

@@ -4,8 +4,12 @@ import type {
   Agent,
   BranchInfo,
   FileDiff,
+  GroupMessage,
+  GroupThread,
+  GroupThreadMember,
   ImportClaudeMdResult,
   InterAgentMessage,
+  McpServer,
   MemoryEntry,
   Message,
   StickyNote,
@@ -225,6 +229,108 @@ export function ipcStickyNoteDelete(noteId: string): Promise<void> {
 
 export function ipcAgentGetActivityFeed(limit?: number): Promise<ActivityEntry[]> {
   return invoke<ActivityEntry[]>('agent_get_activity_feed', { limit });
+}
+
+// ─── Phase 8: group threads ───────────────────────────────────────────────
+
+export interface CreateGroupThreadInput {
+  name: string;
+  color: string;
+}
+
+export function ipcGroupThreadCreate(input: CreateGroupThreadInput): Promise<GroupThread> {
+  return invoke<GroupThread>('group_thread_create', { input });
+}
+
+export function ipcGroupThreadList(): Promise<GroupThread[]> {
+  return invoke<GroupThread[]>('group_thread_list');
+}
+
+export function ipcGroupThreadDelete(threadId: string): Promise<void> {
+  return invoke<void>('group_thread_delete', { threadId });
+}
+
+export function ipcGroupThreadAddMember(threadId: string, agentId: string): Promise<void> {
+  return invoke<void>('group_thread_add_member', { threadId, agentId });
+}
+
+export function ipcGroupThreadRemoveMember(threadId: string, agentId: string): Promise<void> {
+  return invoke<void>('group_thread_remove_member', { threadId, agentId });
+}
+
+export function ipcGroupThreadListMembers(threadId: string): Promise<GroupThreadMember[]> {
+  return invoke<GroupThreadMember[]>('group_thread_list_members', { threadId });
+}
+
+export function ipcGroupThreadListMessages(
+  threadId: string,
+  limit?: number,
+): Promise<GroupMessage[]> {
+  return invoke<GroupMessage[]>('group_thread_list_messages', { threadId, limit });
+}
+
+export function ipcGroupThreadPostMessage(
+  threadId: string,
+  content: string,
+): Promise<GroupMessage> {
+  return invoke<GroupMessage>('group_thread_post_message', { threadId, content });
+}
+
+// ─── Phase 8: MCP servers ─────────────────────────────────────────────────
+
+export interface CreateMcpServerInput {
+  name: string;
+  transport: 'stdio' | 'http';
+  command?: string | null;
+  args?: string[];
+  env?: Record<string, string>;
+  url?: string | null;
+  isDefault?: boolean;
+}
+
+export function ipcMcpServerCreate(input: CreateMcpServerInput): Promise<McpServer> {
+  return invoke<McpServer>('mcp_server_create', { input });
+}
+
+export function ipcMcpServerList(): Promise<McpServer[]> {
+  return invoke<McpServer[]>('mcp_server_list');
+}
+
+export interface UpdateMcpServerInput {
+  serverId: string;
+  name?: string | null;
+  transport?: string | null;
+  command?: string | null;
+  args?: string[] | null;
+  env?: Record<string, string> | null;
+  url?: string | null;
+  isDefault?: boolean | null;
+}
+
+export function ipcMcpServerUpdate(input: UpdateMcpServerInput): Promise<McpServer> {
+  return invoke<McpServer>('mcp_server_update', { input });
+}
+
+export function ipcMcpServerDelete(serverId: string): Promise<void> {
+  return invoke<void>('mcp_server_delete', { serverId });
+}
+
+// ─── Phase 8: terminal ────────────────────────────────────────────────────
+
+export function ipcTerminalOpen(agentId: string): Promise<void> {
+  return invoke<void>('terminal_open', { agentId });
+}
+
+export function ipcTerminalWrite(agentId: string, data: string): Promise<void> {
+  return invoke<void>('terminal_write', { agentId, data });
+}
+
+export function ipcTerminalResize(agentId: string, rows: number, cols: number): Promise<void> {
+  return invoke<void>('terminal_resize', { agentId, rows, cols });
+}
+
+export function ipcTerminalClose(agentId: string): Promise<void> {
+  return invoke<void>('terminal_close', { agentId });
 }
 
 export function ipcSystemRevealPath(path: string): Promise<void> {

@@ -12,6 +12,7 @@ import {
   EVENT_AGENT_TASK_DELETED,
   EVENT_AGENT_TASK_UPDATED,
   EVENT_AGENT_TERMINATED,
+  EVENT_GROUP_MESSAGE_APPENDED,
   EVENT_STICKY_NOTE_CREATED,
   EVENT_STICKY_NOTE_DELETED,
   EVENT_STICKY_NOTE_UPDATED,
@@ -26,6 +27,7 @@ import {
   type AgentTaskDeletedPayload,
   type AgentTaskUpdatedPayload,
   type AgentTerminatedPayload,
+  type GroupMessageAppendedPayload,
   type StickyNoteCreatedPayload,
   type StickyNoteDeletedPayload,
   type StickyNoteUpdatedPayload,
@@ -48,6 +50,7 @@ export function useAgentEvents(): void {
   const removeTask = useAgentsStore((s) => s.removeTask);
   const upsertStickyNote = useAgentsStore((s) => s.upsertStickyNote);
   const removeStickyNote = useAgentsStore((s) => s.removeStickyNote);
+  const appendGroupMessage = useAgentsStore((s) => s.appendGroupMessage);
 
   useEffect(() => {
     const unlisteners: Array<Promise<() => void>> = [
@@ -117,6 +120,9 @@ export function useAgentEvents(): void {
       listen<StickyNoteDeletedPayload>(EVENT_STICKY_NOTE_DELETED, (e) => {
         removeStickyNote(e.payload.noteId);
       }),
+      listen<GroupMessageAppendedPayload>(EVENT_GROUP_MESSAGE_APPENDED, (e) => {
+        appendGroupMessage(e.payload.message);
+      }),
     ];
     return () => {
       for (const p of unlisteners) {
@@ -135,5 +141,6 @@ export function useAgentEvents(): void {
     removeTask,
     upsertStickyNote,
     removeStickyNote,
+    appendGroupMessage,
   ]);
 }

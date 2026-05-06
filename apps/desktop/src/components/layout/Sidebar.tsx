@@ -3,10 +3,12 @@ import {
   LayoutGridIcon,
   ListChecksIcon,
   MessageSquareIcon,
+  PlugIcon,
   SearchIcon,
 } from 'lucide-react';
 import { cn } from '@/lib/cn';
 import { SidebarTeamsSection } from '@/features/teams/sidebar-teams-section';
+import { SidebarGroupsSection } from '@/features/groups/sidebar-groups-section';
 import { useUiStore, type CenterView } from '@/stores/ui-store';
 
 interface SidebarSectionProps {
@@ -50,6 +52,7 @@ export function Sidebar(): JSX.Element {
         <CenterViewNav />
         <SidebarSection title="Folders" icon={FolderIcon} />
         <SidebarSection title="DMs" icon={MessageSquareIcon} />
+        <SidebarGroupsSection />
         <SidebarTeamsSection />
       </div>
     </aside>
@@ -80,6 +83,12 @@ function CenterViewNav(): JSX.Element {
         icon={<ListChecksIcon className="h-3 w-3" />}
         active={view === 'task-inbox'}
         onClick={() => setView('task-inbox')}
+      />
+      <NavRow
+        label="MCP"
+        icon={<PlugIcon className="h-3 w-3" />}
+        active={view === 'mcp-settings'}
+        onClick={() => setView('mcp-settings')}
       />
     </section>
   );
