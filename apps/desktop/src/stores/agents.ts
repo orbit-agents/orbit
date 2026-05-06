@@ -1,7 +1,8 @@
 import { create } from 'zustand';
-import type { Agent, AgentEvent, Message, TokenUsage } from '@orbit/types';
+import type { Agent, AgentEvent, MemoryEntry, Message, TokenUsage } from '@orbit/types';
 
 export type AgentId = string;
+export type MemoryEntryId = string;
 
 export interface XY {
   x: number;
@@ -45,11 +46,27 @@ interface AgentsState {
    *  downstream consumers (e.g. position persistence) know when to write. */
   draggingAgentId: AgentId | null;
 
+  /** Phase 3: per-agent memory list (newest first). Hydrated on demand
+   *  from `memory_list`; live updates flow through `agent:memory_added`. */
+  memoriesByAgent: Record<AgentId, MemoryEntry[]>;
+
+  /** Memory ids freshly added since the last render — drives the slide-in
+   *  highlight animation. Cleared after the highlight animation duration. */
+  recentlyAddedMemoryIds: Record<MemoryEntryId, true>;
+
   hydrate: (agents: Agent[]) => void;
   upsertAgent: (agent: Agent) => void;
   removeAgent: (agentId: AgentId) => void;
   selectAgent: (agentId: AgentId | null) => void;
   renameAgent: (agentId: AgentId, name: string) => void;
+  setIdentity: (agentId: AgentId, soul: string | null, purpose: string | null) => void;
+  setIdentityDirty: (agentId: AgentId, dirty: boolean) => void;
+
+  setMemories: (agentId: AgentId, memories: MemoryEntry[]) => void;
+  addMemory: (agentId: AgentId, entry: MemoryEntry, opts?: { highlight?: boolean }) => void;
+  updateMemory: (agentId: AgentId, entry: MemoryEntry) => void;
+  deleteMemory: (agentId: AgentId, memoryId: MemoryEntryId) => void;
+  clearMemoryHighlight: (memoryId: MemoryEntryId) => void;
 
   setMessages: (agentId: AgentId, messages: Message[]) => void;
   appendPersistedMessage: (agentId: AgentId, message: Message) => void;
@@ -75,6 +92,8 @@ export const useAgentsStore = create<AgentsState>((set, get) => ({
   chatDraftByAgent: {},
   chatScrollByAgent: {},
   draggingAgentId: null,
+  memoriesByAgent: {},
+  recentlyAddedMemoryIds: {},
 
   hydrate: (agents) =>
     set(() => {
@@ -111,6 +130,7 @@ export const useAgentsStore = create<AgentsState>((set, get) => ({
       const { [agentId]: _st, ...restStream } = s.streamingByAgent;
       const { [agentId]: _d, ...restDraft } = s.chatDraftByAgent;
       const { [agentId]: _sc, ...restScroll } = s.chatScrollByAgent;
+      const { [agentId]: _mem, ...restMemories } = s.memoriesByAgent;
       return {
         agents: restAgents,
         orderedAgentIds: order,
@@ -119,6 +139,7 @@ export const useAgentsStore = create<AgentsState>((set, get) => ({
         streamingByAgent: restStream,
         chatDraftByAgent: restDraft,
         chatScrollByAgent: restScroll,
+        memoriesByAgent: restMemories,
       };
     }),
 
@@ -182,6 +203,67 @@ export const useAgentsStore = create<AgentsState>((set, get) => ({
     })),
 
   setDraggingAgent: (agentId) => set(() => ({ draggingAgentId: agentId })),
+
+  setIdentity: (agentId, soul, purpose) =>
+    set((s) => {
+      const agent = s.agents[agentId];
+      if (!agent) return s;
+      const next: Agent = { ...agent, identityDirty: 1 };
+      if (soul !== null && soul !== undefined) next.soul = soul;
+      if (purpose !== null && purpose !== undefined) next.purpose = purpose;
+      return { agents: { ...s.agents, [agentId]: next } };
+    }),
+
+  setIdentityDirty: (agentId, dirty) =>
+    set((s) => {
+      const agent = s.agents[agentId];
+      if (!agent) return s;
+      return {
+        agents: {
+          ...s.agents,
+          [agentId]: { ...agent, identityDirty: dirty ? 1 : 0 },
+        },
+      };
+    }),
+
+  setMemories: (agentId, memories) =>
+    set((s) => ({ memoriesByAgent: { ...s.memoriesByAgent, [agentId]: memories } })),
+
+  addMemory: (agentId, entry, opts) =>
+    set((s) => {
+      const existing = s.memoriesByAgent[agentId] ?? [];
+      // Idempotent on duplicate ids — events can race with optimistic
+      // updates from the modal-add path.
+      if (existing.some((e) => e.id === entry.id)) return s;
+      const nextList = [entry, ...existing];
+      return {
+        memoriesByAgent: { ...s.memoriesByAgent, [agentId]: nextList },
+        recentlyAddedMemoryIds: opts?.highlight
+          ? { ...s.recentlyAddedMemoryIds, [entry.id]: true }
+          : s.recentlyAddedMemoryIds,
+      };
+    }),
+
+  updateMemory: (agentId, entry) =>
+    set((s) => {
+      const existing = s.memoriesByAgent[agentId] ?? [];
+      const nextList = existing.map((e) => (e.id === entry.id ? entry : e));
+      return { memoriesByAgent: { ...s.memoriesByAgent, [agentId]: nextList } };
+    }),
+
+  deleteMemory: (agentId, memoryId) =>
+    set((s) => {
+      const existing = s.memoriesByAgent[agentId] ?? [];
+      const nextList = existing.filter((e) => e.id !== memoryId);
+      return { memoriesByAgent: { ...s.memoriesByAgent, [agentId]: nextList } };
+    }),
+
+  clearMemoryHighlight: (memoryId) =>
+    set((s) => {
+      if (!(memoryId in s.recentlyAddedMemoryIds)) return s;
+      const { [memoryId]: _gone, ...rest } = s.recentlyAddedMemoryIds;
+      return { recentlyAddedMemoryIds: rest };
+    }),
 
   applyEvent: (agentId, event) => {
     const current = get().streamingByAgent[agentId] ?? null;

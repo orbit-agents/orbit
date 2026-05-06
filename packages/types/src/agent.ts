@@ -22,10 +22,16 @@ export interface Agent {
   modelOverride: string | null;
   status: string;
 
-  // Phase 3 — agent identity. Null in Phase 1.
+  // Phase 3 — agent identity.
   soul: string | null;
   purpose: string | null;
-  memory: string | null;
+  /**
+   * 0 = the running agent's session has the latest soul/purpose/memory
+   * already; 1 = the next user turn will carry a `<system_update>`
+   * block with the latest values. The frontend mirrors this as a
+   * boolean via `agent:identity_updated` events.
+   */
+  identityDirty: number;
 
   // Phase 5 — JSON-encoded array of absolute paths. `"[]"` in Phase 1.
   folderAccess: string;

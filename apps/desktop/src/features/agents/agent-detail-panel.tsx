@@ -1,7 +1,9 @@
 import { cn } from '@/lib/cn';
 import { useUiStore, type RightPanelTab } from '@/stores/ui-store';
+import { useAgentsStore } from '@/stores/agents';
 import { AgentChatPanel } from './agent-chat-panel';
 import { AgentSettingsPanel } from './agent-settings-panel';
+import { IdentityPendingPill } from './identity/identity-pending-pill';
 
 const TABS: { id: RightPanelTab; label: string }[] = [
   { id: 'chat', label: 'Chat' },
@@ -16,6 +18,9 @@ const TABS: { id: RightPanelTab; label: string }[] = [
 export function AgentDetailPanel(): JSX.Element {
   const tab = useUiStore((s) => s.rightPanelTab);
   const setTab = useUiStore((s) => s.setRightPanelTab);
+  const identityDirty = useAgentsStore((s) =>
+    s.selectedAgentId ? Boolean(s.agents[s.selectedAgentId]?.identityDirty) : false,
+  );
 
   return (
     <aside className="flex h-full flex-col border-l border-border-subtle bg-panel">
@@ -41,6 +46,11 @@ export function AgentDetailPanel(): JSX.Element {
             {t.label}
           </button>
         ))}
+        {identityDirty ? (
+          <span className="ml-auto">
+            <IdentityPendingPill />
+          </span>
+        ) : null}
       </nav>
       <div className="min-h-0 flex-1">
         {tab === 'chat' ? <AgentChatPanel /> : <AgentSettingsPanel />}

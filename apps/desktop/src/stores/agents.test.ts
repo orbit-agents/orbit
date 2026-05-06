@@ -14,7 +14,7 @@ function makeAgent(id: string): Agent {
     status: 'idle',
     soul: null,
     purpose: null,
-    memory: null,
+    identityDirty: 0,
     folderAccess: '[]',
     teamId: null,
     positionX: 0,
@@ -35,6 +35,8 @@ function reset(): void {
     chatDraftByAgent: {},
     chatScrollByAgent: {},
     draggingAgentId: null,
+    memoriesByAgent: {},
+    recentlyAddedMemoryIds: {},
   });
 }
 
@@ -245,6 +247,106 @@ describe('agents store / Phase 2', () => {
     useAgentsStore.getState().removeAgent('a');
     expect(useAgentsStore.getState().chatDraftByAgent['a']).toBeUndefined();
     expect(useAgentsStore.getState().chatScrollByAgent['a']).toBeUndefined();
+  });
+});
+
+describe('agents store / Phase 3 identity + memory', () => {
+  beforeEach(reset);
+
+  it('setIdentity updates soul/purpose and flips identityDirty', () => {
+    useAgentsStore.getState().upsertAgent(makeAgent('a'));
+    useAgentsStore.getState().setIdentity('a', 'calm engineer', null);
+    const a1 = useAgentsStore.getState().agents['a'];
+    expect(a1?.soul).toBe('calm engineer');
+    expect(a1?.purpose).toBeNull();
+    expect(a1?.identityDirty).toBe(1);
+
+    useAgentsStore.getState().setIdentity('a', null, 'owns api/');
+    const a2 = useAgentsStore.getState().agents['a'];
+    expect(a2?.soul).toBe('calm engineer');
+    expect(a2?.purpose).toBe('owns api/');
+    expect(a2?.identityDirty).toBe(1);
+  });
+
+  it('setIdentityDirty flips the flag both ways', () => {
+    useAgentsStore.getState().upsertAgent(makeAgent('a'));
+    useAgentsStore.getState().setIdentityDirty('a', true);
+    expect(useAgentsStore.getState().agents['a']?.identityDirty).toBe(1);
+    useAgentsStore.getState().setIdentityDirty('a', false);
+    expect(useAgentsStore.getState().agents['a']?.identityDirty).toBe(0);
+  });
+
+  it('addMemory prepends entries newest-first and is idempotent on duplicate ids', () => {
+    useAgentsStore.getState().upsertAgent(makeAgent('a'));
+    const e1 = {
+      id: 'm1',
+      agentId: 'a',
+      content: 'first',
+      category: null,
+      source: 'user',
+      createdAt: '2026-04-25T00:00:00Z',
+      updatedAt: '2026-04-25T00:00:00Z',
+    };
+    const e2 = { ...e1, id: 'm2', content: 'second' };
+    useAgentsStore.getState().addMemory('a', e1);
+    useAgentsStore.getState().addMemory('a', e2);
+    useAgentsStore.getState().addMemory('a', e2); // duplicate
+    const list = useAgentsStore.getState().memoriesByAgent['a'] ?? [];
+    expect(list).toHaveLength(2);
+    expect(list[0]?.id).toBe('m2');
+    expect(list[1]?.id).toBe('m1');
+  });
+
+  it('addMemory with highlight tracks the entry id for animation', () => {
+    useAgentsStore.getState().upsertAgent(makeAgent('a'));
+    const entry = {
+      id: 'm1',
+      agentId: 'a',
+      content: 'fact',
+      category: null,
+      source: 'agent',
+      createdAt: '2026-04-25T00:00:00Z',
+      updatedAt: '2026-04-25T00:00:00Z',
+    };
+    useAgentsStore.getState().addMemory('a', entry, { highlight: true });
+    expect(useAgentsStore.getState().recentlyAddedMemoryIds['m1']).toBe(true);
+    useAgentsStore.getState().clearMemoryHighlight('m1');
+    expect(useAgentsStore.getState().recentlyAddedMemoryIds['m1']).toBeUndefined();
+  });
+
+  it('updateMemory replaces by id; deleteMemory removes', () => {
+    useAgentsStore.getState().upsertAgent(makeAgent('a'));
+    const e = {
+      id: 'm1',
+      agentId: 'a',
+      content: 'old',
+      category: null,
+      source: 'user',
+      createdAt: '2026-04-25T00:00:00Z',
+      updatedAt: '2026-04-25T00:00:00Z',
+    };
+    useAgentsStore.getState().addMemory('a', e);
+    useAgentsStore.getState().updateMemory('a', { ...e, content: 'new' });
+    expect(useAgentsStore.getState().memoriesByAgent['a']?.[0]?.content).toBe('new');
+    useAgentsStore.getState().deleteMemory('a', 'm1');
+    expect(useAgentsStore.getState().memoriesByAgent['a']).toEqual([]);
+  });
+
+  it('removeAgent drops the memory list', () => {
+    useAgentsStore.getState().hydrate([makeAgent('a')]);
+    useAgentsStore.getState().setMemories('a', [
+      {
+        id: 'm1',
+        agentId: 'a',
+        content: 'x',
+        category: null,
+        source: 'user',
+        createdAt: '2026-04-25T00:00:00Z',
+        updatedAt: '2026-04-25T00:00:00Z',
+      },
+    ]);
+    useAgentsStore.getState().removeAgent('a');
+    expect(useAgentsStore.getState().memoriesByAgent['a']).toBeUndefined();
   });
 });
 

@@ -1,19 +1,68 @@
-import { useState } from 'react';
+import { useCallback, useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { cn } from '@/lib/cn';
 import { useAgentsStore } from '@/stores/agents';
-import { ipcAgentRename, ipcAgentTerminate } from '@/lib/ipc';
+import { ipcAgentRename, ipcAgentTerminate, ipcAgentUpdateIdentity } from '@/lib/ipc';
 import type { Agent } from '@orbit/types';
+import { AccordionSection } from '@/components/accordion';
+import { IdentityEditor } from './identity/identity-editor';
+import { MemoryList } from './identity/memory-list';
+import { AdvancedSection } from './identity/advanced-section';
+
+const SOUL_PLACEHOLDER =
+  "I'm a senior backend engineer. I write Go, design APIs, and think in terms of data flow and failure modes. I prefer shipping a correct minimal implementation over a feature-rich fragile one. When unsure about a requirement, I ask rather than assume.";
+
+const PURPOSE_PLACEHOLDER =
+  "My mission is to maintain the API layer. I own everything in api/ and middleware/. I don't touch the frontend. When I make breaking API changes, I message the frontend agent.";
+
+const IMPORT_ON_SPAWN_KEY = 'orbit:importClaudeMdOnSpawn';
 
 /**
- * Right-panel Settings tab. Phase 2 ships the shell only: basic info,
- * rename, and a Terminate action. Soul / Purpose / Memory editors
- * arrive in Phase 3.
+ * Right-panel Settings tab. Phase 3: accordion layout with Profile,
+ * About, Soul, Purpose, Memory, and Advanced sections.
  */
 export function AgentSettingsPanel(): JSX.Element {
   const agent: Agent | null = useAgentsStore((s) =>
     s.selectedAgentId ? (s.agents[s.selectedAgentId] ?? null) : null,
   );
+  const setIdentity = useAgentsStore((s) => s.setIdentity);
+  const memoryCount = useAgentsStore((s) =>
+    agent ? (s.memoriesByAgent[agent.id]?.length ?? 0) : 0,
+  );
+
+  const updateMutation = useMutation({
+    mutationFn: (input: { agentId: string; soul?: string | null; purpose?: string | null }) =>
+      ipcAgentUpdateIdentity(input),
+  });
+
+  const onSaveSoul = useCallback(
+    (next: string) => {
+      if (!agent) return;
+      setIdentity(agent.id, next, null);
+      updateMutation.mutate({ agentId: agent.id, soul: next });
+    },
+    [agent, setIdentity, updateMutation],
+  );
+
+  const onSavePurpose = useCallback(
+    (next: string) => {
+      if (!agent) return;
+      setIdentity(agent.id, null, next);
+      updateMutation.mutate({ agentId: agent.id, purpose: next });
+    },
+    [agent, setIdentity, updateMutation],
+  );
+
+  const [importOnSpawn, setImportOnSpawn] = useState<boolean>(() => {
+    if (typeof window === 'undefined') return false;
+    return window.localStorage.getItem(IMPORT_ON_SPAWN_KEY) === '1';
+  });
+  const onChangeImportOnSpawn = useCallback((next: boolean) => {
+    setImportOnSpawn(next);
+    if (typeof window !== 'undefined') {
+      window.localStorage.setItem(IMPORT_ON_SPAWN_KEY, next ? '1' : '0');
+    }
+  }, []);
 
   if (!agent) {
     return (
@@ -24,8 +73,8 @@ export function AgentSettingsPanel(): JSX.Element {
   }
 
   return (
-    <div className="flex h-full flex-col overflow-y-auto p-4">
-      <div className="flex items-center gap-3">
+    <div className="flex h-full flex-col overflow-y-auto">
+      <div className="flex items-center gap-3 px-4 pt-4 pb-3">
         <span
           className="flex h-10 w-10 items-center justify-center rounded-full"
           style={{ backgroundColor: `${agent.color}26` }}
@@ -38,26 +87,69 @@ export function AgentSettingsPanel(): JSX.Element {
         </div>
       </div>
 
-      <section className="mt-6 flex flex-col gap-4">
+      <AccordionSection title="Profile" defaultOpen summary={agent.name}>
         <RenameRow agentId={agent.id} currentName={agent.name} />
-        <InfoRow label="Status" value={agent.status} />
-        <InfoRow label="Session" value={agent.sessionId ?? '—'} mono />
-        <InfoRow label="Model" value={agent.modelOverride ?? 'default'} mono />
-      </section>
+      </AccordionSection>
 
-      <section className="mt-6 flex flex-col gap-2 rounded-panel border border-border-subtle bg-elevated p-3 text-12 text-text-tertiary">
-        <span className="font-medium text-text-secondary">Coming in later phases</span>
-        <ul className="list-disc pl-4">
-          <li>Soul / Purpose / Memory (Phase 3)</li>
-          <li>Folder access (Phase 5)</li>
-          <li>Team membership (Phase 5)</li>
-          <li>Git worktree (Phase 6)</li>
-        </ul>
-      </section>
+      <AccordionSection
+        title="About"
+        summary={`${agent.modelOverride ?? 'default model'} · ${truncate(agent.workingDir, 40)}`}
+      >
+        <div className="flex flex-col gap-3">
+          <InfoRow label="Status" value={agent.status} />
+          <InfoRow label="Session" value={agent.sessionId ?? '—'} mono />
+          <InfoRow label="Model" value={agent.modelOverride ?? 'default'} mono />
+          <InfoRow label="Working dir" value={agent.workingDir} mono />
+        </div>
+      </AccordionSection>
 
-      <TerminateButton agentId={agent.id} />
+      <AccordionSection
+        title="Soul"
+        summary={agent.soul ? truncate(agent.soul, 60) : 'Not set — using defaults'}
+      >
+        <IdentityEditor
+          value={agent.soul ?? ''}
+          onSave={onSaveSoul}
+          placeholder={SOUL_PLACEHOLDER}
+        />
+      </AccordionSection>
+
+      <AccordionSection
+        title="Purpose"
+        summary={agent.purpose ? truncate(agent.purpose, 60) : 'Not set — using defaults'}
+      >
+        <IdentityEditor
+          value={agent.purpose ?? ''}
+          onSave={onSavePurpose}
+          placeholder={PURPOSE_PLACEHOLDER}
+        />
+      </AccordionSection>
+
+      <AccordionSection
+        title="Memory"
+        summary={memoryCount === 0 ? 'No entries' : `${memoryCount} entries`}
+      >
+        <MemoryList agentId={agent.id} />
+      </AccordionSection>
+
+      <AccordionSection title="Advanced" summary="CLAUDE.md import">
+        <AdvancedSection
+          agentId={agent.id}
+          importOnSpawn={importOnSpawn}
+          onChangeImportOnSpawn={onChangeImportOnSpawn}
+        />
+      </AccordionSection>
+
+      <div className="mt-auto px-4 pb-4 pt-6">
+        <TerminateButton agentId={agent.id} />
+      </div>
     </div>
   );
+}
+
+function truncate(s: string, n: number): string {
+  if (s.length <= n) return s;
+  return `${s.slice(0, n - 1)}…`;
 }
 
 function InfoRow({
@@ -147,7 +239,7 @@ function TerminateButton({ agentId }: { agentId: string }): JSX.Element {
     mutationFn: () => ipcAgentTerminate(agentId),
   });
   return (
-    <div className="mt-auto pt-6">
+    <div className="pt-2">
       {confirming ? (
         <div className="flex items-center justify-between rounded-panel border border-status-error/40 bg-status-error/10 p-3">
           <span className="text-13 text-status-error">Terminate this agent?</span>
@@ -187,3 +279,5 @@ function TerminateButton({ agentId }: { agentId: string }): JSX.Element {
     </div>
   );
 }
+
+export const IMPORT_ON_SPAWN_STORAGE_KEY = IMPORT_ON_SPAWN_KEY;

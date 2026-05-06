@@ -3,8 +3,9 @@ import { open as openDialog } from '@tauri-apps/plugin-dialog';
 import { XIcon, FolderOpenIcon } from 'lucide-react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { cn } from '@/lib/cn';
-import { ipcAgentSpawn } from '@/lib/ipc';
+import { ipcAgentImportClaudeMd, ipcAgentSpawn } from '@/lib/ipc';
 import { useAgentsStore } from '@/stores/agents';
+import { IMPORT_ON_SPAWN_STORAGE_KEY } from './agent-settings-panel';
 
 const EMOJIS = [
   '🛰️',
@@ -74,6 +75,15 @@ export function SpawnAgentDialog({ open, onClose, position }: Props): JSX.Elemen
     onSuccess: (agent) => {
       upsertAgent(agent);
       selectAgent(agent.id);
+      // Phase 3: if the user has the "Import CLAUDE.md on spawn" toggle
+      // enabled, fire the import in the background. Failures are silent
+      // (no CLAUDE.md is the common case and not an error).
+      if (
+        typeof window !== 'undefined' &&
+        window.localStorage.getItem(IMPORT_ON_SPAWN_STORAGE_KEY) === '1'
+      ) {
+        void ipcAgentImportClaudeMd(agent.id).catch(() => {});
+      }
       void qc.invalidateQueries({ queryKey: ['agents'] });
       reset();
       onClose();
