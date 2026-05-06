@@ -108,9 +108,25 @@ Canvas team regions (visual groupings with derived bounds — see ADR 0007). Per
 
 ## Phase 6 — Git isolation · _Planned_
 
-## Phase 6 — Git isolation · _Planned_
+## Phase 6 — Git isolation · _Complete_
 
-One git worktree per agent, one branch per agent. `git2`-based worktree manager. UI surfaces per-agent diff.
+One git worktree per agent, one branch per agent. `libgit2` (`git2`)-based worktree manager. UI surfaces per-agent diff in a right-panel Diff tab + Branch section in Settings.
+
+**Deliverable:** spawn two agents in the same Git repo, watch each get its own `orbit/<slug>-<short-id>` branch off the source HEAD, ask them both to make different edits, and review the diffs side-by-side via the Diff tab.
+
+### Manual test checklist
+
+1. **Spawn into a Git repo (clean).** Pick a clean Git repo as the working directory. The agent appears with a `Settings → Branch` section showing `orbit/<slug>-<id>`, the source repo path, and the current commit hash.
+2. **Worktree path is the data dir.** Click "Reveal worktree" — the file manager opens `<orbit-data-dir>/worktrees/<agent-id>/`. The contents match the source repo at the time of spawn.
+3. **Spawn into a Git repo (dirty).** Make an uncommitted change in the source repo. Try to spawn — the spawn fails with a clear "your base branch has uncommitted changes" message; no agent row is created.
+4. **Spawn outside a Git repo.** Pick a plain folder. The agent spawns; Settings → Branch shows "Not in a Git worktree" and the Diff tab shows the friendly empty state.
+5. **Diff tab — clean tree.** Select an agent in a fresh worktree. Diff tab shows "0 files changed · No changes yet".
+6. **Diff tab — agent edits.** Ask the agent to modify one file and create another. Diff tab updates within ~4s (auto-refresh) showing both files. Click a file block — it expands to show colored hunks (+ green / − red).
+7. **Diff tab — manual refresh.** Click the refresh icon in the Diff header — the diff re-runs immediately.
+8. **Two agents in same repo.** Spawn agent A and B in the same repo. Each gets a different branch. A's edits appear in A's diff only; B's diff is independent. Source repo's working tree stays untouched.
+9. **Restart persistence.** Quit the app, reopen. Both agents' branches and worktrees survive; their diffs render again. A new turn picks up where it left off.
+10. **Terminate vs delete.** Terminate keeps the worktree + branch. Delete removes the worktree directory, prunes the libgit2 metadata, and deletes the branch.
+11. **Cross-platform.** Same flow on macOS, Windows, and Linux. libgit2 is bundled with `git2`; no external `git` binary is required at runtime.
 
 ## Phase 7 — Tasks + status reports + sticky notes · _Planned_
 

@@ -481,6 +481,66 @@ pub async fn list_inter_agent_audit_log(
     Ok(rows)
 }
 
+// ─── Phase 6: git isolation ───────────────────────────────────────────────
+
+pub struct WorktreeRecord<'a> {
+    pub agent_id: &'a str,
+    pub worktree_path: &'a str,
+    pub worktree_branch: &'a str,
+    pub worktree_source_repo: &'a str,
+    pub worktree_base_ref: &'a str,
+}
+
+/// Persist worktree metadata for an agent and rewrite its working
+/// directory to point at the worktree. Called by `agent_spawn` once
+/// the worktree manager has finished creating the worktree on disk.
+pub async fn set_agent_worktree(
+    pool: &SqlitePool,
+    record: WorktreeRecord<'_>,
+) -> Result<(), DbError> {
+    sqlx::query(
+        "UPDATE agents
+         SET has_worktree = 1,
+             working_dir = ?,
+             worktree_path = ?,
+             worktree_branch = ?,
+             worktree_source_repo = ?,
+             worktree_base_ref = ?,
+             updated_at = ?
+         WHERE id = ?",
+    )
+    .bind(record.worktree_path)
+    .bind(record.worktree_path)
+    .bind(record.worktree_branch)
+    .bind(record.worktree_source_repo)
+    .bind(record.worktree_base_ref)
+    .bind(Utc::now())
+    .bind(record.agent_id)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+/// Clear worktree metadata. Used during a failed-spawn rollback or
+/// before deletion.
+pub async fn clear_agent_worktree(pool: &SqlitePool, agent_id: &str) -> Result<(), DbError> {
+    sqlx::query(
+        "UPDATE agents
+         SET has_worktree = 0,
+             worktree_path = NULL,
+             worktree_branch = NULL,
+             worktree_source_repo = NULL,
+             worktree_base_ref = NULL,
+             updated_at = ?
+         WHERE id = ?",
+    )
+    .bind(Utc::now())
+    .bind(agent_id)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
 // ─── Phase 5: teams + folder access ───────────────────────────────────────
 
 pub struct NewTeam<'a> {
@@ -1066,6 +1126,38 @@ mod tests {
             .unwrap();
         let got = get_agent(&pool, "a").await.unwrap().unwrap();
         assert_eq!(got.folder_access, "[\"/home/me/api\",\"/home/me/lib\"]");
+    }
+
+    #[tokio::test]
+    async fn worktree_metadata_round_trips_and_clears() {
+        let pool = memory_pool().await;
+        insert_test_agent(&pool, "a").await;
+
+        set_agent_worktree(
+            &pool,
+            WorktreeRecord {
+                agent_id: "a",
+                worktree_path: "/data/worktrees/a",
+                worktree_branch: "orbit/scout-abc123",
+                worktree_source_repo: "/home/me/proj",
+                worktree_base_ref: "deadbeef",
+            },
+        )
+        .await
+        .unwrap();
+
+        let got = get_agent(&pool, "a").await.unwrap().unwrap();
+        assert_eq!(got.has_worktree, 1);
+        assert_eq!(got.working_dir, "/data/worktrees/a");
+        assert_eq!(got.worktree_branch.as_deref(), Some("orbit/scout-abc123"));
+        assert_eq!(got.worktree_base_ref.as_deref(), Some("deadbeef"));
+
+        clear_agent_worktree(&pool, "a").await.unwrap();
+        let cleared = get_agent(&pool, "a").await.unwrap().unwrap();
+        assert_eq!(cleared.has_worktree, 0);
+        assert!(cleared.worktree_branch.is_none());
+        // working_dir is preserved — manager.remove() handles the
+        // filesystem cleanup; the column doesn't revert on its own.
     }
 
     #[tokio::test]

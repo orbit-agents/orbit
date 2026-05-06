@@ -10,11 +10,14 @@ use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, State};
 
 use crate::agents::engine::{AgentId, EngineHealth, SpawnConfig};
-use crate::agents::prompt_builder::{AgentSummary, SystemPromptBuilder, MEMORY_INJECTION_CAP};
+use crate::agents::prompt_builder::{
+    AgentSummary, BranchContext, SystemPromptBuilder, MEMORY_INJECTION_CAP,
+};
 use crate::broker::TurnContext;
 use crate::core::AppState;
 use crate::db::models::{Agent, InterAgentMessage, MemoryEntry, MemorySource, Message, Team};
-use crate::db::queries::{self, NewAgent, NewMemoryEntry, NewTeam};
+use crate::db::queries::{self, NewAgent, NewMemoryEntry, NewTeam, WorktreeRecord};
+use crate::git::{FileDiff, WorktreeManager};
 
 use super::events::{
     AgentIdentityUpdatedPayload, AgentMemoryAddedPayload, AgentStatusChangePayload,
@@ -52,6 +55,17 @@ async fn build_system_prompt_for(
                 .collect()
         })
         .unwrap_or_default();
+    let branch = if agent.has_worktree != 0 {
+        match (&agent.worktree_branch, &agent.worktree_source_repo) {
+            (Some(b), Some(s)) => Some(BranchContext {
+                branch: b.clone(),
+                source_repo: s.clone(),
+            }),
+            _ => None,
+        }
+    } else {
+        None
+    };
     Ok(SystemPromptBuilder {
         agent_name: agent.name.clone(),
         working_dir: PathBuf::from(&agent.working_dir),
@@ -59,6 +73,7 @@ async fn build_system_prompt_for(
         purpose: agent.purpose.clone(),
         memory,
         other_agents,
+        branch,
     })
 }
 
@@ -200,6 +215,55 @@ pub async fn agent_spawn(
     .await
     .map_err(|e| err("Failed to record agent", e))?;
 
+    // Phase 6: if the working dir sits inside a Git repo, create a
+    // worktree and rewrite the agent's working_dir to point at it.
+    // Failure here rolls back the agent row so we never ship a
+    // half-spawned agent.
+    let agent = if WorktreeManager::is_git_repo(&input.working_dir) {
+        match state.worktrees.create(&id, &input.name, &input.working_dir) {
+            Ok(info) => {
+                let path_str = info.path.to_string_lossy().into_owned();
+                let source_str = info.source_repo.to_string_lossy().into_owned();
+                if let Err(e) = queries::set_agent_worktree(
+                    &state.pool,
+                    WorktreeRecord {
+                        agent_id: &id,
+                        worktree_path: &path_str,
+                        worktree_branch: &info.branch,
+                        worktree_source_repo: &source_str,
+                        worktree_base_ref: &info.base_ref,
+                    },
+                )
+                .await
+                {
+                    // Roll back the worktree if we can't persist; the
+                    // agent row is dropped right after.
+                    let _ = state.worktrees.remove(
+                        &id,
+                        &info.path,
+                        &info.source_repo,
+                        &info.branch,
+                        true,
+                    );
+                    let _ = queries::delete_agent(&state.pool, &id).await;
+                    return Err(err("Failed to record worktree metadata", e));
+                }
+                // Reload the agent so subsequent reads see the
+                // rewritten working_dir + worktree fields.
+                queries::get_agent(&state.pool, &id)
+                    .await
+                    .map_err(|e| err("Failed to reload agent", e))?
+                    .ok_or_else(|| "Agent disappeared after worktree create.".to_string())?
+            }
+            Err(e) => {
+                let _ = queries::delete_agent(&state.pool, &id).await;
+                return Err(format!("Could not set up git worktree: {e}"));
+            }
+        }
+    } else {
+        agent
+    };
+
     // Ensure a conversation exists so send_message doesn't have to worry
     // about creating one under a race.
     queries::get_or_create_conversation_for_agent(&state.pool, &id)
@@ -208,19 +272,49 @@ pub async fn agent_spawn(
 
     let system_prompt = build_system_prompt_for(&state.pool, &agent).await?.build();
     let add_dirs = parse_folder_access(&agent.folder_access);
+    // Working dir for the engine is the worktree path when one
+    // exists, otherwise the original input. The DB column already
+    // reflects the right value.
+    let engine_working_dir = std::path::PathBuf::from(&agent.working_dir);
 
     state
         .engine
         .spawn(SpawnConfig {
             agent_id: id.clone(),
-            working_dir: input.working_dir,
+            working_dir: engine_working_dir,
             model_override: input.model_override,
             resume_session_id: None,
             system_prompt: Some(system_prompt),
             add_dirs,
         })
         .await
-        .map_err(|e| e.user_facing())?;
+        .map_err(|e| {
+            // Roll back: tear down the worktree (if any) and drop the
+            // agent row so the caller sees a clean error.
+            let pool = state.pool.clone();
+            let worktrees = state.worktrees.clone();
+            let agent_for_rollback = agent.clone();
+            let id_for_rollback = id.clone();
+            tokio::spawn(async move {
+                if agent_for_rollback.has_worktree != 0 {
+                    if let (Some(path), Some(branch), Some(source)) = (
+                        agent_for_rollback.worktree_path.as_deref(),
+                        agent_for_rollback.worktree_branch.as_deref(),
+                        agent_for_rollback.worktree_source_repo.as_deref(),
+                    ) {
+                        let _ = worktrees.remove(
+                            &id_for_rollback,
+                            std::path::Path::new(path),
+                            std::path::Path::new(source),
+                            branch,
+                            true,
+                        );
+                    }
+                }
+                let _ = queries::delete_agent(&pool, &id_for_rollback).await;
+            });
+            e.user_facing()
+        })?;
 
     // The agent now has the freshly-built prompt; the dirty flag (if it
     // was set from earlier identity edits — possible on respawn) is
@@ -317,6 +411,28 @@ pub async fn agent_terminate(
 pub async fn agent_delete(state: State<'_, AppState>, agent_id: AgentId) -> CommandResult<()> {
     // Best-effort termination — ignore errors (agent may not be running).
     let _ = state.engine.terminate(&agent_id).await;
+
+    // Phase 6: tear down the worktree before dropping the agent row
+    // so the libgit2 metadata + on-disk dir + branch all go away
+    // together. ON DELETE CASCADE doesn't reach the filesystem.
+    if let Ok(Some(agent)) = queries::get_agent(&state.pool, &agent_id).await {
+        if agent.has_worktree != 0 {
+            if let (Some(path), Some(branch), Some(source)) = (
+                agent.worktree_path.as_deref(),
+                agent.worktree_branch.as_deref(),
+                agent.worktree_source_repo.as_deref(),
+            ) {
+                let _ = state.worktrees.remove(
+                    &agent.id,
+                    std::path::Path::new(path),
+                    std::path::Path::new(source),
+                    branch,
+                    true,
+                );
+            }
+        }
+    }
+
     queries::delete_agent(&state.pool, &agent_id)
         .await
         .map_err(|e| err("Failed to delete agent", e))
@@ -674,6 +790,82 @@ pub async fn agent_update_folder_access(
         .map_err(|e| err("Failed to update folder access", e))
 }
 
+// ─── Phase 6: git diff / branch info ──────────────────────────────────────
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BranchInfo {
+    pub branch: String,
+    pub source_repo: String,
+    pub base_branch: Option<String>,
+    pub base_ref: String,
+    pub current_commit: String,
+    pub worktree_path: String,
+}
+
+#[tauri::command]
+pub async fn agent_get_diff(
+    state: State<'_, AppState>,
+    agent_id: AgentId,
+) -> CommandResult<Vec<FileDiff>> {
+    let agent = queries::get_agent(&state.pool, &agent_id)
+        .await
+        .map_err(|e| err("Failed to look up agent", e))?
+        .ok_or_else(|| format!("Agent {agent_id} not found."))?;
+    if agent.has_worktree == 0 {
+        return Ok(Vec::new());
+    }
+    let (Some(path), Some(base)) = (
+        agent.worktree_path.as_deref(),
+        agent.worktree_base_ref.as_deref(),
+    ) else {
+        return Ok(Vec::new());
+    };
+    state
+        .worktrees
+        .diff(std::path::Path::new(path), base)
+        .map_err(|e| format!("Failed to compute diff: {e}"))
+}
+
+#[tauri::command]
+pub async fn agent_get_branch_info(
+    state: State<'_, AppState>,
+    agent_id: AgentId,
+) -> CommandResult<Option<BranchInfo>> {
+    let agent = queries::get_agent(&state.pool, &agent_id)
+        .await
+        .map_err(|e| err("Failed to look up agent", e))?
+        .ok_or_else(|| format!("Agent {agent_id} not found."))?;
+    if agent.has_worktree == 0 {
+        return Ok(None);
+    }
+    let (path, branch, source, base_ref) = match (
+        agent.worktree_path.clone(),
+        agent.worktree_branch.clone(),
+        agent.worktree_source_repo.clone(),
+        agent.worktree_base_ref.clone(),
+    ) {
+        (Some(p), Some(b), Some(s), Some(r)) => (p, b, s, r),
+        _ => return Ok(None),
+    };
+    let current_commit = state
+        .worktrees
+        .current_commit(std::path::Path::new(&path))
+        .unwrap_or_else(|_| base_ref.clone());
+    Ok(Some(BranchInfo {
+        branch,
+        source_repo: source,
+        // Phase 6 doesn't persist the base branch label separately —
+        // the prompt addendum and UI both display the branch name
+        // alongside the source repo path. Set None for now and add a
+        // column later if the UI needs it standalone.
+        base_branch: None,
+        base_ref,
+        current_commit,
+        worktree_path: path,
+    }))
+}
+
 // ─── Phase 4: inter-agent message inspection ──────────────────────────────
 
 /// Recent inter-agent messages either to or from the given agent,
@@ -705,6 +897,30 @@ pub async fn agent_get_audit_log(
 #[serde(rename_all = "camelCase")]
 pub struct SystemHealth {
     pub engine: EngineHealth,
+}
+
+/// Phase 6: open the platform's file manager at the given path.
+/// Best-effort and intentionally minimal — used by the Settings →
+/// Branch section's "Reveal worktree" button. Errors are swallowed
+/// into a user-facing message.
+#[tauri::command]
+pub async fn system_reveal_path(path: String) -> CommandResult<()> {
+    let target = std::path::PathBuf::from(&path);
+    if !target.exists() {
+        return Err(format!("Path does not exist: {path}"));
+    }
+    #[cfg(target_os = "macos")]
+    let cmd = "open";
+    #[cfg(target_os = "windows")]
+    let cmd = "explorer";
+    #[cfg(all(unix, not(target_os = "macos")))]
+    let cmd = "xdg-open";
+
+    std::process::Command::new(cmd)
+        .arg(&target)
+        .spawn()
+        .map_err(|e| format!("Failed to open file manager: {e}"))?;
+    Ok(())
 }
 
 #[tauri::command]
@@ -740,6 +956,11 @@ mod tests {
             team_id: None,
             position_x: 0.0,
             position_y: 0.0,
+            has_worktree: 0,
+            worktree_path: None,
+            worktree_branch: None,
+            worktree_source_repo: None,
+            worktree_base_ref: None,
             created_at: Utc::now(),
             updated_at: Utc::now(),
         }

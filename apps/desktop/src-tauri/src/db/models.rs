@@ -52,6 +52,18 @@ pub struct Agent {
     pub position_x: f64,
     pub position_y: f64,
 
+    // Phase 6 — git isolation. `has_worktree = 0` means this agent
+    // works directly inside `working_dir` (Phase 1 behavior, no
+    // branch). `has_worktree = 1` means `working_dir` IS the worktree
+    // path and the four `worktree_*` fields are populated. The
+    // `worktree_base_ref` commit hash pins the diff base so it
+    // doesn't drift when the source repo rebases.
+    pub has_worktree: i64,
+    pub worktree_path: Option<String>,
+    pub worktree_branch: Option<String>,
+    pub worktree_source_repo: Option<String>,
+    pub worktree_base_ref: Option<String>,
+
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }

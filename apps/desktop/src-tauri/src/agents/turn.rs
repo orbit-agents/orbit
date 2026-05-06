@@ -176,6 +176,9 @@ async fn run_turn(ctx: TurnContext, req: TurnRequest) -> Result<(), String> {
             purpose: agent.purpose.clone(),
             memory,
             other_agents: Vec::<AgentSummary>::new(),
+            // Update block is short and doesn't need the branch
+            // addendum — branch state doesn't change between turns.
+            branch: None,
         }
         .build_update_block();
         Some(block)

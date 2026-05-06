@@ -11,10 +11,13 @@ use std::sync::Arc;
 use sqlx::SqlitePool;
 
 use crate::agents::engine::{AgentEngine, SpawnConfig};
-use crate::agents::prompt_builder::{AgentSummary, SystemPromptBuilder, MEMORY_INJECTION_CAP};
+use crate::agents::prompt_builder::{
+    AgentSummary, BranchContext, SystemPromptBuilder, MEMORY_INJECTION_CAP,
+};
 use crate::agents::supervisor::SharedSupervisor;
 use crate::broker::SharedBroker;
 use crate::db::queries;
+use crate::git::SharedWorktreeManager;
 
 /// Everything IPC commands need to talk to the world.
 #[derive(Clone)]
@@ -23,6 +26,7 @@ pub struct AppState {
     pub engine: Arc<dyn AgentEngine>,
     pub supervisor: SharedSupervisor,
     pub broker: SharedBroker,
+    pub worktrees: SharedWorktreeManager,
     pub data_dir: PathBuf,
 }
 
@@ -84,6 +88,17 @@ pub async fn rehydrate_agents(
                     .to_string(),
             })
             .collect();
+        let branch = if agent.has_worktree != 0 {
+            match (&agent.worktree_branch, &agent.worktree_source_repo) {
+                (Some(b), Some(s)) => Some(BranchContext {
+                    branch: b.clone(),
+                    source_repo: s.clone(),
+                }),
+                _ => None,
+            }
+        } else {
+            None
+        };
         let prompt = SystemPromptBuilder {
             agent_name: agent.name.clone(),
             working_dir: working_dir.clone(),
@@ -91,6 +106,7 @@ pub async fn rehydrate_agents(
             purpose: agent.purpose.clone(),
             memory,
             other_agents,
+            branch,
         }
         .build();
 

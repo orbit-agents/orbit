@@ -25,6 +25,7 @@ use crate::agents::claude_code::ClaudeCodeEngine;
 use crate::agents::supervisor::Supervisor;
 use crate::broker::Broker;
 use crate::core::AppState;
+use crate::git::WorktreeManager;
 
 const DB_FILENAME: &str = "orbit.db";
 
@@ -59,6 +60,9 @@ pub fn run() {
             ipc::commands::team_delete,
             ipc::commands::agent_set_team,
             ipc::commands::agent_update_folder_access,
+            ipc::commands::agent_get_diff,
+            ipc::commands::agent_get_branch_info,
+            ipc::commands::system_reveal_path,
             ipc::commands::system_health_check,
         ])
         .setup(|app| {
@@ -77,6 +81,10 @@ pub fn run() {
             let engine: Arc<dyn crate::agents::engine::AgentEngine> =
                 Arc::new(ClaudeCodeEngine::new());
             let broker = Arc::new(Broker::new(pool.clone()));
+            // Phase 6: per-agent worktrees live under
+            // <data-dir>/worktrees/<agent-id>. The directory is
+            // created lazily by WorktreeManager.create.
+            let worktrees = Arc::new(WorktreeManager::new(data_dir.join("worktrees")));
 
             // Rehydrate persisted agents best-effort so users find their
             // conversations alive after a restart.
@@ -95,6 +103,7 @@ pub fn run() {
                 engine,
                 supervisor,
                 broker,
+                worktrees,
                 data_dir: data_dir.clone(),
             };
             app.manage(state);
