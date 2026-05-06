@@ -14,6 +14,7 @@ pub type ConversationId = String;
 pub type MessageId = String;
 pub type MemoryEntryId = String;
 pub type InterAgentMessageId = String;
+pub type TeamId = String;
 
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
 #[serde(rename_all = "camelCase")]
@@ -97,6 +98,23 @@ impl MessageRole {
             _ => None,
         }
     }
+}
+
+/// Phase 5: a visual grouping of agents on the canvas. Bounds are
+/// derived from members at render time (see ADR 0007); the optional
+/// `hint_*` columns let empty teams carry a placeholder rectangle.
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+#[serde(rename_all = "camelCase")]
+pub struct Team {
+    pub id: TeamId,
+    pub name: String,
+    pub color: String,
+    pub hint_x: Option<f64>,
+    pub hint_y: Option<f64>,
+    pub hint_width: Option<f64>,
+    pub hint_height: Option<f64>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
 }
 
 /// Source attribution for a memory entry. Surfaces in the UI so users

@@ -7,7 +7,7 @@ use sqlx::SqlitePool;
 
 use super::models::{
     Agent, Conversation, InterAgentMessage, InterAgentMessageStatus, MemoryEntry, MemorySource,
-    Message, MessageRole,
+    Message, MessageRole, Team,
 };
 use super::DbError;
 
@@ -481,6 +481,149 @@ pub async fn list_inter_agent_audit_log(
     Ok(rows)
 }
 
+// ─── Phase 5: teams + folder access ───────────────────────────────────────
+
+pub struct NewTeam<'a> {
+    pub id: &'a str,
+    pub name: &'a str,
+    pub color: &'a str,
+}
+
+pub async fn insert_team(pool: &SqlitePool, new: NewTeam<'_>) -> Result<Team, DbError> {
+    let now = Utc::now();
+    sqlx::query(
+        "INSERT INTO teams (id, name, color, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?)",
+    )
+    .bind(new.id)
+    .bind(new.name)
+    .bind(new.color)
+    .bind(now)
+    .bind(now)
+    .execute(pool)
+    .await?;
+    get_team(pool, new.id)
+        .await?
+        .ok_or_else(|| DbError::Sqlx(sqlx::Error::RowNotFound))
+}
+
+pub async fn get_team(pool: &SqlitePool, id: &str) -> Result<Option<Team>, DbError> {
+    let row = sqlx::query_as::<_, Team>("SELECT * FROM teams WHERE id = ?")
+        .bind(id)
+        .fetch_optional(pool)
+        .await?;
+    Ok(row)
+}
+
+pub async fn list_teams(pool: &SqlitePool) -> Result<Vec<Team>, DbError> {
+    let rows = sqlx::query_as::<_, Team>("SELECT * FROM teams ORDER BY created_at ASC")
+        .fetch_all(pool)
+        .await?;
+    Ok(rows)
+}
+
+pub async fn update_team(
+    pool: &SqlitePool,
+    id: &str,
+    name: Option<&str>,
+    color: Option<&str>,
+) -> Result<(), DbError> {
+    let now = Utc::now();
+    if let Some(n) = name {
+        sqlx::query("UPDATE teams SET name = ?, updated_at = ? WHERE id = ?")
+            .bind(n)
+            .bind(now)
+            .bind(id)
+            .execute(pool)
+            .await?;
+    }
+    if let Some(c) = color {
+        sqlx::query("UPDATE teams SET color = ?, updated_at = ? WHERE id = ?")
+            .bind(c)
+            .bind(now)
+            .bind(id)
+            .execute(pool)
+            .await?;
+    }
+    Ok(())
+}
+
+/// Update the placeholder hint that gives empty teams a default
+/// bounding box. Pass `None` to clear the hint and revert to "fit
+/// to members".
+pub async fn update_team_hint(
+    pool: &SqlitePool,
+    id: &str,
+    hint: Option<(f64, f64, f64, f64)>,
+) -> Result<(), DbError> {
+    let now = Utc::now();
+    let (x, y, w, h) = match hint {
+        Some(h) => (Some(h.0), Some(h.1), Some(h.2), Some(h.3)),
+        None => (None, None, None, None),
+    };
+    sqlx::query(
+        "UPDATE teams
+         SET hint_x = ?, hint_y = ?, hint_width = ?, hint_height = ?, updated_at = ?
+         WHERE id = ?",
+    )
+    .bind(x)
+    .bind(y)
+    .bind(w)
+    .bind(h)
+    .bind(now)
+    .bind(id)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+/// Delete a team. Members are not cascaded — `agents.team_id` is set
+/// to NULL by the FK (none currently) so we update manually first.
+pub async fn delete_team(pool: &SqlitePool, id: &str) -> Result<(), DbError> {
+    sqlx::query("UPDATE agents SET team_id = NULL, updated_at = ? WHERE team_id = ?")
+        .bind(Utc::now())
+        .bind(id)
+        .execute(pool)
+        .await?;
+    sqlx::query("DELETE FROM teams WHERE id = ?")
+        .bind(id)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+/// Set the agent's team membership. `team_id = None` clears it.
+pub async fn set_agent_team(
+    pool: &SqlitePool,
+    agent_id: &str,
+    team_id: Option<&str>,
+) -> Result<(), DbError> {
+    sqlx::query("UPDATE agents SET team_id = ?, updated_at = ? WHERE id = ?")
+        .bind(team_id)
+        .bind(Utc::now())
+        .bind(agent_id)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+/// Phase 5: per-agent folder allowlist. Stored as a JSON array of
+/// absolute paths in `agents.folder_access`. Working dir is
+/// implicit and never appears in this list.
+pub async fn update_agent_folder_access(
+    pool: &SqlitePool,
+    agent_id: &str,
+    folders_json: &str,
+) -> Result<(), DbError> {
+    sqlx::query("UPDATE agents SET folder_access = ?, updated_at = ? WHERE id = ?")
+        .bind(folders_json)
+        .bind(Utc::now())
+        .bind(agent_id)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
 pub async fn list_messages_for_agent(
     pool: &SqlitePool,
     agent_id: &str,
@@ -853,6 +996,76 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(count.0, 0);
+    }
+
+    #[tokio::test]
+    async fn team_create_assign_member_and_delete_clears_membership() {
+        let pool = memory_pool().await;
+        insert_test_agent(&pool, "a").await;
+        insert_test_agent(&pool, "b").await;
+
+        let team = insert_team(
+            &pool,
+            NewTeam {
+                id: "t-1",
+                name: "Payments",
+                color: "#7ec891",
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(team.name, "Payments");
+
+        set_agent_team(&pool, "a", Some("t-1")).await.unwrap();
+        set_agent_team(&pool, "b", Some("t-1")).await.unwrap();
+
+        let teams = list_teams(&pool).await.unwrap();
+        assert_eq!(teams.len(), 1);
+
+        delete_team(&pool, "t-1").await.unwrap();
+        let after_a = get_agent(&pool, "a").await.unwrap().unwrap();
+        let after_b = get_agent(&pool, "b").await.unwrap().unwrap();
+        assert!(after_a.team_id.is_none());
+        assert!(after_b.team_id.is_none());
+        assert_eq!(list_teams(&pool).await.unwrap().len(), 0);
+    }
+
+    #[tokio::test]
+    async fn update_team_hint_round_trips() {
+        let pool = memory_pool().await;
+        insert_team(
+            &pool,
+            NewTeam {
+                id: "t-1",
+                name: "X",
+                color: "#000",
+            },
+        )
+        .await
+        .unwrap();
+
+        update_team_hint(&pool, "t-1", Some((10.0, 20.0, 240.0, 120.0)))
+            .await
+            .unwrap();
+        let got = get_team(&pool, "t-1").await.unwrap().unwrap();
+        assert_eq!(got.hint_x, Some(10.0));
+        assert_eq!(got.hint_width, Some(240.0));
+
+        update_team_hint(&pool, "t-1", None).await.unwrap();
+        let cleared = get_team(&pool, "t-1").await.unwrap().unwrap();
+        assert!(cleared.hint_x.is_none());
+        assert!(cleared.hint_width.is_none());
+    }
+
+    #[tokio::test]
+    async fn folder_access_round_trips() {
+        let pool = memory_pool().await;
+        insert_test_agent(&pool, "a").await;
+        update_agent_folder_access(&pool, "a", "[\"/home/me/api\",\"/home/me/lib\"]")
+            .await
+            .unwrap();
+        let got = get_agent(&pool, "a").await.unwrap().unwrap();
+        assert_eq!(got.folder_access, "[\"/home/me/api\",\"/home/me/lib\"]");
     }
 
     #[tokio::test]

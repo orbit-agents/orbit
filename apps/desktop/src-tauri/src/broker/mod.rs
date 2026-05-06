@@ -67,9 +67,20 @@ impl BrokerError {
     }
 }
 
+/// One queued turn for an agent. Both the human-facing
+/// `agent_send_message` command and the broker's `dispatch` path
+/// land on the same per-agent FIFO so concurrent human + broker
+/// activity to the same agent serializes cleanly instead of
+/// trampling on each other's `turn_sender` slot in the engine.
+#[derive(Debug)]
+enum QueuedTurn {
+    Inbound(InterAgentMessage),
+    User { content: String },
+}
+
 #[derive(Default)]
 struct InboxState {
-    queue: VecDeque<InterAgentMessage>,
+    queue: VecDeque<QueuedTurn>,
     processing: bool,
 }
 
@@ -179,7 +190,7 @@ impl Broker {
             let inbox = self.inbox_for(&recipient_id).await;
             let need_to_spawn = {
                 let mut state = inbox.lock().await;
-                state.queue.push_back(row.clone());
+                state.queue.push_back(QueuedTurn::Inbound(row.clone()));
                 if state.processing {
                     false
                 } else {
@@ -201,6 +212,36 @@ impl Broker {
         })
     }
 
+    /// Phase 5 fix: route human-initiated turns through the same
+    /// per-agent queue the broker uses for inbound messages. This
+    /// keeps engine.send_message from being called concurrently
+    /// against the same agent (which would race the `turn_sender`
+    /// slot and orphan one of the streams).
+    pub async fn enqueue_user_turn(
+        self: &Arc<Self>,
+        ctx: TurnContext,
+        agent_id: AgentId,
+        content: String,
+    ) {
+        let inbox = self.inbox_for(&agent_id).await;
+        let need_to_spawn = {
+            let mut state = inbox.lock().await;
+            state.queue.push_back(QueuedTurn::User { content });
+            if state.processing {
+                false
+            } else {
+                state.processing = true;
+                true
+            }
+        };
+        if need_to_spawn {
+            let broker = Arc::clone(self);
+            tokio::spawn(async move {
+                broker.drain_inbox(ctx, agent_id).await;
+            });
+        }
+    }
+
     /// Drain the recipient's inbox one message at a time. Each
     /// iteration pops, marks `delivered`, runs the recipient's turn
     /// (which marks `acknowledged` on `TurnComplete`), and loops.
@@ -209,42 +250,55 @@ impl Broker {
         loop {
             let next = {
                 let mut state = inbox.lock().await;
-                if let Some(msg) = state.queue.pop_front() {
-                    Some(msg)
+                if let Some(item) = state.queue.pop_front() {
+                    Some(item)
                 } else {
                     state.processing = false;
                     None
                 }
             };
-            let Some(msg) = next else {
+            let Some(item) = next else {
                 return;
             };
 
-            if let Err(e) = queries::update_inter_agent_message_status(
-                &ctx.pool,
-                &msg.id,
-                InterAgentMessageStatus::Delivered,
-            )
-            .await
-            {
-                tracing::warn!(error = %e, "failed to mark inter-agent message delivered");
-            }
-            // Re-emit so the frontend in-flight set transitions
-            // pending → delivered for the canvas overlay.
-            let mut delivered_row = msg.clone();
-            delivered_row.status = InterAgentMessageStatus::Delivered.as_str().to_string();
-            delivered_row.delivered_at = Some(chrono::Utc::now());
-            let _ = ctx.app.emit(
-                EVENT_AGENT_INTER_AGENT_MESSAGE_DISPATCHED,
-                AgentInterAgentMessageDispatchedPayload {
-                    message: delivered_row,
-                },
-            );
+            match item {
+                QueuedTurn::Inbound(msg) => {
+                    if let Err(e) = queries::update_inter_agent_message_status(
+                        &ctx.pool,
+                        &msg.id,
+                        InterAgentMessageStatus::Delivered,
+                    )
+                    .await
+                    {
+                        tracing::warn!(error = %e, "failed to mark inter-agent message delivered");
+                    }
+                    // Re-emit so the frontend in-flight set transitions
+                    // pending → delivered for the canvas overlay.
+                    let mut delivered_row = msg.clone();
+                    delivered_row.status = InterAgentMessageStatus::Delivered.as_str().to_string();
+                    delivered_row.delivered_at = Some(chrono::Utc::now());
+                    let _ = ctx.app.emit(
+                        EVENT_AGENT_INTER_AGENT_MESSAGE_DISPATCHED,
+                        AgentInterAgentMessageDispatchedPayload {
+                            message: delivered_row,
+                        },
+                    );
 
-            if let Err(e) =
-                crate::agents::turn::run_inbound_turn(ctx.clone(), agent_id.clone(), msg).await
-            {
-                tracing::warn!(error = %e, "inbound turn handler failed");
+                    if let Err(e) =
+                        crate::agents::turn::run_inbound_turn(ctx.clone(), agent_id.clone(), msg)
+                            .await
+                    {
+                        tracing::warn!(error = %e, "inbound turn handler failed");
+                    }
+                }
+                QueuedTurn::User { content } => {
+                    if let Err(e) =
+                        crate::agents::turn::run_user_turn(ctx.clone(), agent_id.clone(), content)
+                            .await
+                    {
+                        tracing::warn!(error = %e, "user turn handler failed");
+                    }
+                }
             }
         }
     }

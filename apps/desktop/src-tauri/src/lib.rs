@@ -53,6 +53,12 @@ pub fn run() {
             ipc::commands::memory_delete,
             ipc::commands::agent_get_inter_agent_messages,
             ipc::commands::agent_get_audit_log,
+            ipc::commands::team_create,
+            ipc::commands::team_list,
+            ipc::commands::team_update,
+            ipc::commands::team_delete,
+            ipc::commands::agent_set_team,
+            ipc::commands::agent_update_folder_access,
             ipc::commands::system_health_check,
         ])
         .setup(|app| {

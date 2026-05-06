@@ -13,8 +13,8 @@ use crate::agents::engine::{AgentId, EngineHealth, SpawnConfig};
 use crate::agents::prompt_builder::{AgentSummary, SystemPromptBuilder, MEMORY_INJECTION_CAP};
 use crate::broker::TurnContext;
 use crate::core::AppState;
-use crate::db::models::{Agent, InterAgentMessage, MemoryEntry, MemorySource, Message};
-use crate::db::queries::{self, NewAgent, NewMemoryEntry};
+use crate::db::models::{Agent, InterAgentMessage, MemoryEntry, MemorySource, Message, Team};
+use crate::db::queries::{self, NewAgent, NewMemoryEntry, NewTeam};
 
 use super::events::{
     AgentIdentityUpdatedPayload, AgentMemoryAddedPayload, AgentStatusChangePayload,
@@ -70,6 +70,68 @@ fn first_line(s: &str) -> String {
         .find(|l| !l.is_empty())
         .unwrap_or("")
         .to_string()
+}
+
+/// Decode the JSON-encoded array of allowed folders stored on
+/// `agents.folder_access` into a `Vec<PathBuf>`. Tolerates malformed
+/// JSON by returning an empty list — the working directory is still
+/// implicitly accessible.
+fn parse_folder_access(raw: &str) -> Vec<PathBuf> {
+    if raw.trim().is_empty() {
+        return Vec::new();
+    }
+    match serde_json::from_str::<Vec<String>>(raw) {
+        Ok(v) => v.into_iter().map(PathBuf::from).collect(),
+        Err(e) => {
+            tracing::warn!(error = %e, raw, "failed to parse folder_access");
+            Vec::new()
+        }
+    }
+}
+
+/// Phase 5: check whether a path is reachable for the given agent.
+/// A path is allowed if it equals or sits under the agent's working
+/// directory or under any folder in its allowlist. Comparisons use
+/// canonicalized paths so symlinks and relative segments don't fool
+/// the check; if canonicalization fails we fall back to lexical
+/// containment as a best-effort guard.
+fn validate_path_for_agent(agent: &Agent, target: &std::path::Path) -> Result<(), String> {
+    let target_can = target
+        .canonicalize()
+        .unwrap_or_else(|_| target.to_path_buf());
+
+    let working = PathBuf::from(&agent.working_dir);
+    let working_can = working.canonicalize().unwrap_or(working);
+    if path_starts_with(&target_can, &working_can) {
+        return Ok(());
+    }
+
+    for raw in parse_folder_access(&agent.folder_access) {
+        let allowed = raw.canonicalize().unwrap_or(raw);
+        if path_starts_with(&target_can, &allowed) {
+            return Ok(());
+        }
+    }
+
+    Err(format!(
+        "{} is outside this agent's allowed folders.",
+        target.display()
+    ))
+}
+
+fn path_starts_with(target: &std::path::Path, prefix: &std::path::Path) -> bool {
+    let tc = target
+        .components()
+        .map(|c| c.as_os_str())
+        .collect::<Vec<_>>();
+    let pc = prefix
+        .components()
+        .map(|c| c.as_os_str())
+        .collect::<Vec<_>>();
+    if pc.len() > tc.len() {
+        return false;
+    }
+    pc.iter().zip(tc.iter()).all(|(a, b)| a == b)
 }
 
 #[derive(Debug, Deserialize)]
@@ -145,6 +207,7 @@ pub async fn agent_spawn(
         .map_err(|e| err("Failed to initialize conversation", e))?;
 
     let system_prompt = build_system_prompt_for(&state.pool, &agent).await?.build();
+    let add_dirs = parse_folder_access(&agent.folder_access);
 
     state
         .engine
@@ -154,6 +217,7 @@ pub async fn agent_spawn(
             model_override: input.model_override,
             resume_session_id: None,
             system_prompt: Some(system_prompt),
+            add_dirs,
         })
         .await
         .map_err(|e| e.user_facing())?;
@@ -218,11 +282,12 @@ pub async fn agent_send_message(
         app: app.clone(),
         broker: state.broker.clone(),
     };
-    tokio::spawn(async move {
-        if let Err(e) = crate::agents::turn::run_user_turn(ctx, agent_id, message).await {
-            tracing::warn!(error = %e, "user turn failed");
-        }
-    });
+    // Phase 5 carryover from the Phase 4 follow-up: route human-
+    // initiated turns through the same per-agent queue the broker
+    // owns, so a human send while the agent is mid-broker-turn (or
+    // vice versa) serializes safely instead of racing the engine's
+    // `turn_sender` slot.
+    state.broker.enqueue_user_turn(ctx, agent_id, message).await;
     Ok(())
 }
 
@@ -450,6 +515,11 @@ pub async fn agent_import_claude_md(
         .ok_or_else(|| format!("Agent {agent_id} not found."))?;
 
     let path = PathBuf::from(&agent.working_dir).join("CLAUDE.md");
+    // Phase 5: even though CLAUDE.md sits inside the working dir
+    // (which is implicitly allowed), we route through
+    // validate_path_for_agent so any future relocation of this
+    // command goes through the same guard rail.
+    validate_path_for_agent(&agent, &path)?;
     let contents = match tokio::fs::read_to_string(&path).await {
         Ok(s) => s,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
@@ -493,6 +563,117 @@ pub async fn agent_import_claude_md(
     })
 }
 
+// ─── Phase 5: teams + folder access ───────────────────────────────────────
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateTeamInput {
+    pub name: String,
+    pub color: String,
+}
+
+#[tauri::command]
+pub async fn team_create(
+    state: State<'_, AppState>,
+    input: CreateTeamInput,
+) -> CommandResult<Team> {
+    if input.name.trim().is_empty() {
+        return Err("Team name cannot be empty.".to_string());
+    }
+    let id = uuid::Uuid::new_v4().to_string();
+    queries::insert_team(
+        &state.pool,
+        NewTeam {
+            id: &id,
+            name: input.name.trim(),
+            color: &input.color,
+        },
+    )
+    .await
+    .map_err(|e| err("Failed to create team", e))
+}
+
+#[tauri::command]
+pub async fn team_list(state: State<'_, AppState>) -> CommandResult<Vec<Team>> {
+    queries::list_teams(&state.pool)
+        .await
+        .map_err(|e| err("Failed to list teams", e))
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateTeamInput {
+    pub team_id: String,
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default)]
+    pub color: Option<String>,
+}
+
+#[tauri::command]
+pub async fn team_update(state: State<'_, AppState>, input: UpdateTeamInput) -> CommandResult<()> {
+    queries::update_team(
+        &state.pool,
+        &input.team_id,
+        input.name.as_deref(),
+        input.color.as_deref(),
+    )
+    .await
+    .map_err(|e| err("Failed to update team", e))
+}
+
+#[tauri::command]
+pub async fn team_delete(state: State<'_, AppState>, team_id: String) -> CommandResult<()> {
+    queries::delete_team(&state.pool, &team_id)
+        .await
+        .map_err(|e| err("Failed to delete team", e))
+}
+
+/// Set or clear an agent's team membership. Pass `team_id = None` to
+/// unassign. Drag-into-team flows call this on `onNodeDragStop`.
+#[tauri::command]
+pub async fn agent_set_team(
+    state: State<'_, AppState>,
+    agent_id: AgentId,
+    team_id: Option<String>,
+) -> CommandResult<()> {
+    queries::set_agent_team(&state.pool, &agent_id, team_id.as_deref())
+        .await
+        .map_err(|e| err("Failed to update team membership", e))
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateFolderAccessInput {
+    pub agent_id: AgentId,
+    pub folders: Vec<String>,
+}
+
+/// Replace the agent's folder allowlist. Working dir is implicit and
+/// never appears in this list. Phase 5 spawns pass each entry to
+/// Claude Code via `--add-dir`.
+#[tauri::command]
+pub async fn agent_update_folder_access(
+    state: State<'_, AppState>,
+    input: UpdateFolderAccessInput,
+) -> CommandResult<()> {
+    // Canonicalize and dedupe before persisting so the allowlist
+    // doesn't carry duplicates or relative paths that would silently
+    // not match.
+    let mut seen = std::collections::BTreeSet::new();
+    for raw in &input.folders {
+        let p = PathBuf::from(raw);
+        let canonical = p.canonicalize().unwrap_or(p);
+        seen.insert(canonical.to_string_lossy().into_owned());
+    }
+    let normalized: Vec<String> = seen.into_iter().collect();
+    let json = serde_json::to_string(&normalized)
+        .map_err(|e| err("Failed to serialise folder access", e))?;
+    queries::update_agent_folder_access(&state.pool, &input.agent_id, &json)
+        .await
+        .map_err(|e| err("Failed to update folder access", e))
+}
+
 // ─── Phase 4: inter-agent message inspection ──────────────────────────────
 
 /// Recent inter-agent messages either to or from the given agent,
@@ -534,4 +715,69 @@ pub async fn system_health_check(state: State<'_, AppState>) -> CommandResult<Sy
         .await
         .map_err(|e| e.user_facing())?;
     Ok(SystemHealth { engine })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::Utc;
+
+    fn agent_with(working_dir: &str, folder_access: &str) -> Agent {
+        Agent {
+            id: "a".into(),
+            name: "A".into(),
+            emoji: "🌟".into(),
+            color: "#000".into(),
+            working_dir: working_dir.into(),
+            session_id: None,
+            model_override: None,
+            status: "idle".into(),
+            soul: None,
+            purpose: None,
+            memory: None,
+            identity_dirty: 0,
+            folder_access: folder_access.into(),
+            team_id: None,
+            position_x: 0.0,
+            position_y: 0.0,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        }
+    }
+
+    #[test]
+    fn parse_folder_access_handles_empty_and_malformed_input() {
+        assert!(parse_folder_access("").is_empty());
+        assert!(parse_folder_access("   ").is_empty());
+        assert!(parse_folder_access("not json").is_empty());
+        let parsed = parse_folder_access("[\"/home/me/api\",\"/home/me/lib\"]");
+        assert_eq!(parsed.len(), 2);
+        assert_eq!(parsed[0].to_string_lossy(), "/home/me/api");
+    }
+
+    #[test]
+    fn validate_path_allows_working_dir_descendants() {
+        let agent = agent_with("/tmp", "[]");
+        assert!(validate_path_for_agent(&agent, std::path::Path::new("/tmp")).is_ok());
+        assert!(validate_path_for_agent(&agent, std::path::Path::new("/tmp/nested/file")).is_ok());
+    }
+
+    #[test]
+    fn validate_path_rejects_outside_paths() {
+        let agent = agent_with("/tmp/api", "[]");
+        let err =
+            validate_path_for_agent(&agent, std::path::Path::new("/var/log/syslog")).unwrap_err();
+        assert!(err.contains("outside"));
+    }
+
+    #[test]
+    fn validate_path_allows_allowlisted_folder_descendants() {
+        let agent = agent_with("/tmp/api", "[\"/usr/local/lib\"]");
+        assert!(
+            validate_path_for_agent(&agent, std::path::Path::new("/usr/local/lib/zoneinfo"))
+                .is_ok()
+        );
+        // Sibling outside both the working dir and the allowlist.
+        assert!(validate_path_for_agent(&agent, std::path::Path::new("/usr/local/share")).is_err());
+    }
 }

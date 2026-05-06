@@ -32,6 +32,18 @@ pub struct AppState {
 /// This runs best-effort: individual agent failures are logged and then
 /// ignored so the app can still launch when only some agents are in a
 /// bad state (e.g. their working directory was moved or deleted).
+/// Decode the JSON-encoded folder allowlist for rehydration.
+/// Mirrors `commands::parse_folder_access` — kept local to avoid
+/// pulling the IPC module into core during boot.
+fn parse_folder_access_for_rehydrate(raw: &str) -> Vec<PathBuf> {
+    if raw.trim().is_empty() {
+        return Vec::new();
+    }
+    serde_json::from_str::<Vec<String>>(raw)
+        .map(|v| v.into_iter().map(PathBuf::from).collect())
+        .unwrap_or_default()
+}
+
 pub async fn rehydrate_agents(
     pool: &SqlitePool,
     engine: &dyn AgentEngine,
@@ -82,12 +94,14 @@ pub async fn rehydrate_agents(
         }
         .build();
 
+        let add_dirs = parse_folder_access_for_rehydrate(&agent.folder_access);
         let cfg = SpawnConfig {
             agent_id: agent.id.clone(),
             working_dir,
             model_override: agent.model_override.clone(),
             resume_session_id: agent.session_id.clone(),
             system_prompt: Some(prompt),
+            add_dirs,
         };
         match engine.spawn(cfg).await {
             Ok(()) => {

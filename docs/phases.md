@@ -87,9 +87,26 @@ Broker implementation, `send_message_to_agent` tool exposed to agents, canvas an
 9. **Teammate roster appears in prompt.** Spawn a second agent while A is running. A's next turn includes a "Your teammates" section in its system prompt addendum (you can verify by editing A's Soul to provoke an `<system_update>` and inspecting the next message).
 10. **Cross-platform.** Same flow on macOS, Windows, and Linux.
 
-## Phase 5 — Teams + folder access · _Planned_
+## Phase 5 — Teams + folder access · _Complete_
 
-Canvas team regions (visual groupings with bounds). Per-agent folder allowlist enforced at the core IPC boundary.
+Canvas team regions (visual groupings with derived bounds — see ADR 0007). Per-agent folder allowlist passed to Claude Code via `--add-dir` at spawn and validated at any IPC command that touches the filesystem on the agent's behalf.
+
+**Deliverable:** group three agents into a "Payments" team, drop a fourth into the team region by drag, click the team in the sidebar to pan to it, allowlist a shared `lib/` directory across two agents, and verify both agents can read it while a third (without the allowlist) cannot.
+
+### Manual test checklist
+
+1. **Create a team.** Click `+` next to the Teams section header in the sidebar. Type "Payments", press Enter. The team appears with a color swatch and `0` member count.
+2. **Drag-into-team.** Drag two agents so their centers land inside the (default placeholder) Payments region. Each agent's `team_id` is persisted; the team's member count goes to `2`. The region's dashed rectangle now hugs the two agents with 16px padding and a mono-uppercase "PAYMENTS" label at the top-left.
+3. **Drag-out-of-team.** Drag one of the two agents far away from the region. On drag-end the agent is removed from the team; the region tightens around the remaining member.
+4. **Click-to-pan.** Click the team row in the sidebar. The canvas smoothly pans/zooms to fit the team's member region with 25% padding.
+5. **Empty-team placeholder.** Drag both agents out of the team. The region falls back to a 240×120 placeholder near the origin and is still clickable in the sidebar.
+6. **Restart persistence.** Quit the app, reopen. Teams + memberships are restored exactly.
+7. **Folder access — add.** Open the agent's Settings → Folder access. Click "Add folder", pick `~/shared/lib`. The folder appears in the list as a row with a remove button. Re-spawn the agent (or restart the app) and verify Claude Code received it via `--add-dir` (peek at the spawn args in the Rust log).
+8. **Folder access — remove.** Hover the row, click the X. The folder is removed from the list. Working dir is never listed (it's the read-only "always allowed" row at the top).
+9. **Folder access enforcement.** With agent A's working dir at `~/api` and no extra allowlist, place a `CLAUDE.md` at `~/lib/CLAUDE.md` and call "Import now" — it should fail with the user-facing "outside this agent's allowed folders" error. Add `~/lib` to the allowlist; the same import succeeds.
+10. **Cross-platform.** Same flow on macOS, Windows, and Linux. Folder paths are canonicalized server-side; allowlists deduplicate symlinked or relative entries.
+
+## Phase 6 — Git isolation · _Planned_
 
 ## Phase 6 — Git isolation · _Planned_
 

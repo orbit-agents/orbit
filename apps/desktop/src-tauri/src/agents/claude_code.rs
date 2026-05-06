@@ -144,6 +144,12 @@ impl AgentEngine for ClaudeCodeEngine {
             // the model still knows how to use Read/Edit/Bash/etc.
             cmd.arg("--append-system-prompt").arg(prompt);
         }
+        // Phase 5: per-agent folder allowlist. Claude Code only reads
+        // and writes within the working dir + any `--add-dir`s, so
+        // this is the first line of folder-access enforcement.
+        for dir in &config.add_dirs {
+            cmd.arg("--add-dir").arg(dir);
+        }
 
         cmd.stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
@@ -561,6 +567,7 @@ printf '%s\n' '{"type":"result","subtype":"success","usage":{"input_tokens":1,"o
                 model_override: None,
                 resume_session_id: None,
                 system_prompt: None,
+                add_dirs: vec![],
             })
             .await
             .unwrap();

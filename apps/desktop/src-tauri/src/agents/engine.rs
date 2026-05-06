@@ -29,6 +29,13 @@ pub struct SpawnConfig {
     /// memory by the caller. `None` means use Claude's defaults only —
     /// useful for tests and for the empty-identity case.
     pub system_prompt: Option<String>,
+    /// Phase 5: per-agent folder allowlist beyond the working dir.
+    /// Each entry is passed to Claude Code as a `--add-dir` flag at
+    /// spawn so the model can read those directories. The working
+    /// directory itself is implicit (Claude Code allows it by
+    /// default).
+    #[serde(default)]
+    pub add_dirs: Vec<PathBuf>,
 }
 
 /// Token usage reported at the end of a turn.
