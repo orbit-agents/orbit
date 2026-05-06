@@ -1,5 +1,12 @@
 import { invoke } from '@tauri-apps/api/core';
-import type { Agent, ImportClaudeMdResult, MemoryEntry, Message, SystemHealth } from '@orbit/types';
+import type {
+  Agent,
+  ImportClaudeMdResult,
+  InterAgentMessage,
+  MemoryEntry,
+  Message,
+  SystemHealth,
+} from '@orbit/types';
 
 /** Input shape matching the Rust `SpawnAgentInput` struct. */
 export interface SpawnAgentInput {
@@ -79,6 +86,17 @@ export function ipcMemoryDelete(memoryId: string, agentId: string): Promise<void
 
 export function ipcAgentImportClaudeMd(agentId: string): Promise<ImportClaudeMdResult> {
   return invoke<ImportClaudeMdResult>('agent_import_claude_md', { agentId });
+}
+
+export function ipcAgentGetInterAgentMessages(
+  agentId: string,
+  limit?: number,
+): Promise<InterAgentMessage[]> {
+  return invoke<InterAgentMessage[]>('agent_get_inter_agent_messages', { agentId, limit });
+}
+
+export function ipcAgentGetAuditLog(limit?: number): Promise<InterAgentMessage[]> {
+  return invoke<InterAgentMessage[]>('agent_get_audit_log', { limit });
 }
 
 export function ipcSystemHealthCheck(): Promise<SystemHealth> {

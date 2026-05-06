@@ -22,6 +22,22 @@ const config: Config = {
         panel: 'var(--color-bg-panel)',
         elevated: 'var(--color-bg-elevated)',
         hover: 'var(--color-bg-hover)',
+        // V1 Ledger ink scale — explicit elevation when needed.
+        ink: {
+          0: 'var(--ink0)',
+          1: 'var(--ink1)',
+          2: 'var(--ink2)',
+          3: 'var(--ink3)',
+          4: 'var(--ink4)',
+          5: 'var(--ink5)',
+        },
+        line: {
+          0: 'var(--line0)',
+          1: 'var(--line1)',
+          2: 'var(--line2)',
+          3: 'var(--line3)',
+          4: 'var(--line4)',
+        },
         border: {
           DEFAULT: 'var(--color-border)',
           subtle: 'var(--color-border-subtle)',
@@ -30,16 +46,23 @@ const config: Config = {
           primary: 'var(--color-text-primary)',
           secondary: 'var(--color-text-secondary)',
           tertiary: 'var(--color-text-tertiary)',
+          faint: 'var(--color-text-faint)',
+          ghost: 'var(--color-text-ghost)',
         },
         accent: 'var(--color-accent)',
         status: {
           active: 'var(--color-status-active)',
           waiting: 'var(--color-status-waiting)',
           error: 'var(--color-status-error)',
+          running: 'var(--status-running)',
+          thinking: 'var(--status-thinking)',
+          review: 'var(--status-review)',
+          failed: 'var(--status-failed)',
+          idle: 'var(--status-idle)',
         },
       },
       fontFamily: {
-        sans: ['Inter', 'ui-sans-serif', 'system-ui', 'sans-serif'],
+        sans: ['Geist Sans', 'Inter', 'ui-sans-serif', 'system-ui', 'sans-serif'],
         mono: ['JetBrains Mono', 'ui-monospace', 'SFMono-Regular', 'monospace'],
       },
       fontSize: {

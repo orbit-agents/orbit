@@ -3,6 +3,18 @@ import { ChevronDownIcon, ChevronRightIcon, CheckIcon, XIcon } from 'lucide-reac
 import { cn } from '@/lib/cn';
 import type { Message, ToolUseContent, UserOrAssistantContent } from '@orbit/types';
 import type { StreamingToolCall } from '@/stores/agents';
+import { useAgentsStore } from '@/stores/agents';
+
+/**
+ * Synthetic-user content emitted by the broker when agent A messages
+ * agent B. Lives in `messages.content` JSON alongside the regular
+ * UserOrAssistantContent shape.
+ */
+interface InboundUserContent {
+  text: string;
+  fromAgentId?: string;
+  interAgentMessageId?: string;
+}
 
 function safeParse<T>(raw: string, fallback: T): T {
   try {
@@ -20,6 +32,43 @@ export function UserMessageBubble({ text }: { text: string }): JSX.Element {
           'max-w-[80%] rounded-card bg-accent/15 px-3 py-2 text-13 text-text-primary',
           'whitespace-pre-wrap',
         )}
+      >
+        {text}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Inbound message bubble — agent A sent this to the agent whose chat
+ * we're viewing. Visually distinct from human user messages: no
+ * accent tint, instead a "from {AgentName}" label with the sender's
+ * emoji/color, left-aligned, ink2 background. Per the V1 Ledger spec.
+ */
+export function InboundAgentBubble({
+  text,
+  fromAgentId,
+}: {
+  text: string;
+  fromAgentId: string;
+}): JSX.Element {
+  const sender = useAgentsStore((s) => s.agents[fromAgentId] ?? null);
+  return (
+    <div className="flex flex-col items-start gap-1">
+      <div className="flex items-center gap-1.5 text-11 text-text-tertiary">
+        <span aria-hidden className="orbit-emoji">
+          {sender?.emoji ?? '✦'}
+        </span>
+        <span className="font-mono">from {sender?.name ?? 'agent'}</span>
+      </div>
+      <div
+        className={cn(
+          'max-w-[88%] rounded-card border border-line-2 bg-ink-2 px-3 py-2 text-13 text-text-primary',
+          'whitespace-pre-wrap',
+        )}
+        style={{
+          borderLeft: `2px solid ${sender?.color ?? 'var(--status-thinking)'}`,
+        }}
       >
         {text}
       </div>
@@ -129,8 +178,11 @@ function summarizeInput(toolName: string, input: unknown): string {
 export function PersistedMessageBubble({ message }: { message: Message }): JSX.Element | null {
   switch (message.role) {
     case 'user': {
-      const { text } = safeParse<UserOrAssistantContent>(message.content, { text: '' });
-      return <UserMessageBubble text={text} />;
+      const parsed = safeParse<InboundUserContent>(message.content, { text: '' });
+      if (parsed.fromAgentId) {
+        return <InboundAgentBubble text={parsed.text} fromAgentId={parsed.fromAgentId} />;
+      }
+      return <UserMessageBubble text={parsed.text} />;
     }
     case 'assistant': {
       const { text } = safeParse<UserOrAssistantContent>(message.content, { text: '' });

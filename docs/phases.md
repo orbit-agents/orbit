@@ -68,9 +68,24 @@ Soul / Purpose / Memory fields on the agent. System prompt built by templating t
 13. **Marker discussion safety.** Ask the agent "what's the syntax of the remember tool?" — the agent's reply mentions `<remember>...</remember>` mid-prose; verify no spurious memory entry is created.
 14. **Cross-platform.** Same flow on macOS, Windows, and Linux.
 
-## Phase 4 — Agent-to-agent messaging · _Planned_
+## Phase 4 — Agent-to-agent messaging · _In Progress_
 
-Broker implementation, `send_message_to_agent` tool exposed to agents, canvas animations for in-flight messages. Messaging is audited in the DB.
+Broker implementation, `send_message_to_agent` tool exposed to agents, canvas animations for in-flight messages. Messaging is audited in the DB. V1 Ledger design system applied across the app: ink/line scale tokens, accent green, Geist Sans, OrbitMark logo in the title bar.
+
+**Deliverable:** ask agent A to delegate something to agent B, watch the message arc fly across the canvas to B's node, see it appear in B's chat as a "from Atlas" bubble, and verify the audit log captures the round trip.
+
+### Manual test checklist
+
+1. **Spawn two agents.** Agent A in working dir X, Agent B in working dir Y.
+2. **Outbound `<send_to>` succeeds.** Tell A "ask Bee to count the files in their working directory". A's response includes a `<send_to agent="Bee">...</send_to>` marker that gets stripped from A's chat. The Inbox section in A's Settings tab shows the dispatched message.
+3. **Canvas flight animation.** A green dashed arc appears between A's node and B's node, animating with flow direction toward B. The arc disappears when B's turn completes (acknowledged status).
+4. **Inbound bubble in B's chat.** B's chat shows a left-aligned "from Atlas" bubble with A's emoji, color, and the message text — distinct from a human user message.
+5. **Self-send rejection.** Have A try to message itself. The Inbox shows a `failed` row tagged `self_send`.
+6. **Unknown recipient.** Have A try to message an agent that doesn't exist. The Inbox shows a `failed` row tagged `unknown_recipient`. A console warning fires.
+7. **Loop guard.** Stage A → B → A → B → … with a question that bounces. After ~8 hops the broker rejects the next dispatch with `depth_exceeded`.
+8. **Audit log persists across restart.** Send a few messages between agents. Quit the app, reopen. The Inbox section still shows them.
+9. **Teammate roster appears in prompt.** Spawn a second agent while A is running. A's next turn includes a "Your teammates" section in its system prompt addendum (you can verify by editing A's Soul to provoke an `<system_update>` and inspecting the next message).
+10. **Cross-platform.** Same flow on macOS, Windows, and Linux.
 
 ## Phase 5 — Teams + folder access · _Planned_
 

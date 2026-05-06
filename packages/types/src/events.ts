@@ -85,6 +85,34 @@ export interface ImportClaudeMdResult {
   sourcePath: string | null;
 }
 
+/** One row of the `inter_agent_messages` audit table. */
+export type InterAgentMessageStatus = 'pending' | 'delivered' | 'acknowledged' | 'failed';
+
+export interface InterAgentMessage {
+  id: string;
+  fromAgentId: string;
+  toAgentId: string;
+  content: string;
+  originHumanMessageId: string | null;
+  depth: number;
+  /** String on the wire so a future status doesn't break older databases. */
+  status: string;
+  createdAt: string;
+  deliveredAt: string | null;
+}
+
+export interface AgentInterAgentMessageDispatchedPayload {
+  message: InterAgentMessage;
+}
+
+export interface AgentInterAgentMessageFailedPayload {
+  fromAgentId: string;
+  toAgentName: string;
+  /** Stable machine tag: 'unknown_recipient' | 'self_send' | 'depth_exceeded' | 'db_error'. */
+  reason: string;
+  detail: string;
+}
+
 export interface EngineHealth {
   available: boolean;
   version: string | null;
@@ -103,3 +131,6 @@ export const EVENT_AGENT_TERMINATED = 'agent:terminated' as const;
 export const EVENT_AGENT_MEMORY_ADDED = 'agent:memory_added' as const;
 export const EVENT_AGENT_IDENTITY_UPDATED = 'agent:identity_updated' as const;
 export const EVENT_AGENT_ASSISTANT_MESSAGE_PERSISTED = 'agent:assistant_message_persisted' as const;
+export const EVENT_AGENT_INTER_AGENT_MESSAGE_DISPATCHED =
+  'agent:inter_agent_message_dispatched' as const;
+export const EVENT_AGENT_INTER_AGENT_MESSAGE_FAILED = 'agent:inter_agent_message_failed' as const;

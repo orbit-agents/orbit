@@ -17,6 +17,7 @@
     "tauri:build": "tauri build"
   },
   "dependencies": {
+    "@fontsource/geist-sans": "^5.2.5",
     "@fontsource/inter": "^5.1.1",
     "@fontsource/jetbrains-mono": "^5.1.2",
     "@orbit/types": "workspace:*",

@@ -1,8 +1,16 @@
 import { create } from 'zustand';
-import type { Agent, AgentEvent, MemoryEntry, Message, TokenUsage } from '@orbit/types';
+import type {
+  Agent,
+  AgentEvent,
+  InterAgentMessage,
+  MemoryEntry,
+  Message,
+  TokenUsage,
+} from '@orbit/types';
 
 export type AgentId = string;
 export type MemoryEntryId = string;
+export type InterAgentMessageId = string;
 
 export interface XY {
   x: number;
@@ -54,6 +62,16 @@ interface AgentsState {
    *  highlight animation. Cleared after the highlight animation duration. */
   recentlyAddedMemoryIds: Record<MemoryEntryId, true>;
 
+  /** Phase 4: per-agent inter-agent message list (newest first). Both
+   *  outbound and inbound messages land here, keyed by the agent's id
+   *  on the *focal* side — the agent the user is currently looking at. */
+  interAgentMessagesByAgent: Record<AgentId, InterAgentMessage[]>;
+
+  /** Phase 4: messages currently in flight on the canvas. Keyed by id
+   *  for O(1) updates from the dispatch / delivered / acknowledged
+   *  events. The MessageFlightLayer reads from this. */
+  inFlightMessages: Record<InterAgentMessageId, InterAgentMessage>;
+
   hydrate: (agents: Agent[]) => void;
   upsertAgent: (agent: Agent) => void;
   removeAgent: (agentId: AgentId) => void;
@@ -67,6 +85,9 @@ interface AgentsState {
   updateMemory: (agentId: AgentId, entry: MemoryEntry) => void;
   deleteMemory: (agentId: AgentId, memoryId: MemoryEntryId) => void;
   clearMemoryHighlight: (memoryId: MemoryEntryId) => void;
+
+  setInterAgentMessages: (agentId: AgentId, messages: InterAgentMessage[]) => void;
+  upsertInterAgentMessage: (message: InterAgentMessage) => void;
 
   setMessages: (agentId: AgentId, messages: Message[]) => void;
   appendPersistedMessage: (agentId: AgentId, message: Message) => void;
@@ -94,6 +115,8 @@ export const useAgentsStore = create<AgentsState>((set, get) => ({
   draggingAgentId: null,
   memoriesByAgent: {},
   recentlyAddedMemoryIds: {},
+  interAgentMessagesByAgent: {},
+  inFlightMessages: {},
 
   hydrate: (agents) =>
     set(() => {
@@ -131,6 +154,7 @@ export const useAgentsStore = create<AgentsState>((set, get) => ({
       const { [agentId]: _d, ...restDraft } = s.chatDraftByAgent;
       const { [agentId]: _sc, ...restScroll } = s.chatScrollByAgent;
       const { [agentId]: _mem, ...restMemories } = s.memoriesByAgent;
+      const { [agentId]: _iam, ...restIam } = s.interAgentMessagesByAgent;
       return {
         agents: restAgents,
         orderedAgentIds: order,
@@ -140,6 +164,7 @@ export const useAgentsStore = create<AgentsState>((set, get) => ({
         chatDraftByAgent: restDraft,
         chatScrollByAgent: restScroll,
         memoriesByAgent: restMemories,
+        interAgentMessagesByAgent: restIam,
       };
     }),
 
@@ -263,6 +288,40 @@ export const useAgentsStore = create<AgentsState>((set, get) => ({
       if (!(memoryId in s.recentlyAddedMemoryIds)) return s;
       const { [memoryId]: _gone, ...rest } = s.recentlyAddedMemoryIds;
       return { recentlyAddedMemoryIds: rest };
+    }),
+
+  setInterAgentMessages: (agentId, messages) =>
+    set((s) => ({
+      interAgentMessagesByAgent: { ...s.interAgentMessagesByAgent, [agentId]: messages },
+    })),
+
+  upsertInterAgentMessage: (message) =>
+    set((s) => {
+      const updateList = (list: InterAgentMessage[] | undefined): InterAgentMessage[] => {
+        const existing = list ?? [];
+        const idx = existing.findIndex((m) => m.id === message.id);
+        if (idx === -1) return [message, ...existing];
+        const next = existing.slice();
+        next[idx] = message;
+        return next;
+      };
+      // Both endpoints care about this row.
+      const next: Record<AgentId, InterAgentMessage[]> = { ...s.interAgentMessagesByAgent };
+      next[message.fromAgentId] = updateList(next[message.fromAgentId]);
+      if (message.fromAgentId !== message.toAgentId) {
+        next[message.toAgentId] = updateList(next[message.toAgentId]);
+      }
+      // Track in-flight set: any non-terminal status keeps the row visible
+      // on the canvas overlay; terminal statuses (acknowledged, failed)
+      // get the row removed.
+      const flight = { ...s.inFlightMessages };
+      const terminal = message.status === 'acknowledged' || message.status === 'failed';
+      if (terminal) {
+        delete flight[message.id];
+      } else {
+        flight[message.id] = message;
+      }
+      return { interAgentMessagesByAgent: next, inFlightMessages: flight };
     }),
 
   applyEvent: (agentId, event) => {

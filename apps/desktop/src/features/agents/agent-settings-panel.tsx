@@ -8,6 +8,7 @@ import { AccordionSection } from '@/components/accordion';
 import { IdentityEditor } from './identity/identity-editor';
 import { MemoryList } from './identity/memory-list';
 import { AdvancedSection } from './identity/advanced-section';
+import { InboxList } from './inbox/inbox-list';
 
 const SOUL_PLACEHOLDER =
   "I'm a senior backend engineer. I write Go, design APIs, and think in terms of data flow and failure modes. I prefer shipping a correct minimal implementation over a feature-rich fragile one. When unsure about a requirement, I ask rather than assume.";
@@ -28,6 +29,9 @@ export function AgentSettingsPanel(): JSX.Element {
   const setIdentity = useAgentsStore((s) => s.setIdentity);
   const memoryCount = useAgentsStore((s) =>
     agent ? (s.memoriesByAgent[agent.id]?.length ?? 0) : 0,
+  );
+  const inboxCount = useAgentsStore((s) =>
+    agent ? (s.interAgentMessagesByAgent[agent.id]?.length ?? 0) : 0,
   );
 
   const updateMutation = useMutation({
@@ -130,6 +134,13 @@ export function AgentSettingsPanel(): JSX.Element {
         summary={memoryCount === 0 ? 'No entries' : `${memoryCount} entries`}
       >
         <MemoryList agentId={agent.id} />
+      </AccordionSection>
+
+      <AccordionSection
+        title="Inbox"
+        summary={inboxCount === 0 ? 'No agent traffic' : `${inboxCount} agent messages`}
+      >
+        <InboxList agentId={agent.id} />
       </AccordionSection>
 
       <AccordionSection title="Advanced" summary="CLAUDE.md import">

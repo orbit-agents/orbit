@@ -1,24 +1,41 @@
 import { cn } from '@/lib/cn';
+import { OrbitMark } from '@/components/orbit-mark';
 
-/** Top bar with app title and map-tabs placeholder. */
+/**
+ * Title bar — V1 Ledger spec.
+ * 36px tall, ink1 background, line0 bottom border. Traffic-light dots
+ * on the left, brand mark + wordmark, then map tabs (mono 11px).
+ */
 export function TopBar(): JSX.Element {
   return (
-    <header
-      className={cn(
-        'flex h-12 shrink-0 items-center gap-4 border-b border-border-subtle',
-        'bg-panel px-4',
-      )}
-    >
-      <div className="flex items-center gap-2">
-        <div
-          aria-hidden
-          className="h-4 w-4 rounded-full bg-accent shadow-[0_0_12px_2px_var(--color-accent)]"
-        />
-        <span className="text-14 font-semibold tracking-tight text-text-primary">Orbit</span>
+    <header className={cn('flex h-9 shrink-0 items-center border-b border-line-0 bg-ink-1 px-3')}>
+      <div className="flex w-[78px] items-center gap-2">
+        <span aria-hidden className="h-[11px] w-[11px] rounded-full bg-line-4" />
+        <span aria-hidden className="h-[11px] w-[11px] rounded-full bg-line-4" />
+        <span aria-hidden className="h-[11px] w-[11px] rounded-full bg-line-4" />
       </div>
-      <nav className="flex items-center gap-1 text-13 text-text-secondary" aria-label="Maps">
-        <span className="rounded-button bg-hover px-3 py-1 text-text-primary">default</span>
-        <span className="text-text-tertiary">+ new map</span>
+      <div className="mr-2 flex h-[22px] items-center gap-[6px] border-r border-line-2 pr-3">
+        <OrbitMark size={16} />
+        <span
+          className="text-text-primary"
+          style={{ fontSize: 12, fontWeight: 600, letterSpacing: -0.1 }}
+        >
+          orbit
+        </span>
+      </div>
+      <nav
+        aria-label="Maps"
+        className="flex flex-1 items-center gap-[2px] font-mono text-11 text-text-tertiary"
+      >
+        <span
+          className={cn(
+            'rounded-[4px] border border-line-3 bg-ink-5 px-[10px] py-1',
+            'text-text-primary',
+          )}
+        >
+          default
+        </span>
+        <span className="cursor-pointer rounded-[4px] px-2 py-1 hover:bg-hover">+</span>
       </nav>
     </header>
   );

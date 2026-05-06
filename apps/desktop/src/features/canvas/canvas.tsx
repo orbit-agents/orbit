@@ -23,6 +23,7 @@ import type { AgentNodeData } from './nodes/agent-node';
 import { EmptyCanvasPrompt } from './empty-canvas-prompt';
 import { CanvasToolbar } from './canvas-toolbar';
 import { AgentCountPill } from './agent-count-pill';
+import { MessageFlightLayer } from './message-flight-layer';
 import { useCanvasShortcuts } from './use-canvas-shortcuts';
 import { AgentContextMenu, type AgentContextMenuAction } from './agent-context-menu';
 
@@ -279,6 +280,7 @@ function CanvasInner({ onRequestSpawn }: Props): JSX.Element {
         />
       </ReactFlow>
       {isEmpty ? <EmptyCanvasPrompt /> : null}
+      <MessageFlightLayer />
       <AgentCountPill />
       <CanvasToolbar />
       {contextMenu ? (
