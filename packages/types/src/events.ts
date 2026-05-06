@@ -117,6 +117,55 @@ export interface BranchInfo {
   worktreePath: string;
 }
 
+import type { Task } from './task.js';
+
+export interface AgentTaskCreatedPayload {
+  task: Task;
+}
+
+export interface AgentTaskUpdatedPayload {
+  task: Task;
+}
+
+export interface AgentTaskDeletedPayload {
+  taskId: string;
+  agentId: string;
+}
+
+/** Phase 7: human-only canvas annotation. */
+export interface StickyNote {
+  id: string;
+  content: string;
+  positionX: number;
+  positionY: number;
+  color: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface StickyNoteCreatedPayload {
+  note: StickyNote;
+}
+
+export interface StickyNoteUpdatedPayload {
+  note: StickyNote;
+}
+
+export interface StickyNoteDeletedPayload {
+  noteId: string;
+}
+
+/** Phase 7: chronological activity feed entry. */
+export interface ActivityEntry {
+  kind: string;
+  agentId: string;
+  timestamp: string;
+  title: string;
+  status: string | null;
+  taskId: string | null;
+  memoryId: string | null;
+}
+
 /** One row of the `inter_agent_messages` audit table. */
 export type InterAgentMessageStatus = 'pending' | 'delivered' | 'acknowledged' | 'failed';
 
@@ -166,3 +215,9 @@ export const EVENT_AGENT_ASSISTANT_MESSAGE_PERSISTED = 'agent:assistant_message_
 export const EVENT_AGENT_INTER_AGENT_MESSAGE_DISPATCHED =
   'agent:inter_agent_message_dispatched' as const;
 export const EVENT_AGENT_INTER_AGENT_MESSAGE_FAILED = 'agent:inter_agent_message_failed' as const;
+export const EVENT_AGENT_TASK_CREATED = 'agent:task_created' as const;
+export const EVENT_AGENT_TASK_UPDATED = 'agent:task_updated' as const;
+export const EVENT_AGENT_TASK_DELETED = 'agent:task_deleted' as const;
+export const EVENT_STICKY_NOTE_CREATED = 'sticky_note:created' as const;
+export const EVENT_STICKY_NOTE_UPDATED = 'sticky_note:updated' as const;
+export const EVENT_STICKY_NOTE_DELETED = 'sticky_note:deleted' as const;

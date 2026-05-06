@@ -14,6 +14,7 @@ export type { RegionBounds, Team } from './team.js';
 export type { Folder } from './folder.js';
 
 export type {
+  ActivityEntry,
   AgentAssistantMessagePersistedPayload,
   AgentEvent,
   AgentEventPayload,
@@ -22,6 +23,9 @@ export type {
   AgentInterAgentMessageFailedPayload,
   AgentMemoryAddedPayload,
   AgentStatusChangePayload,
+  AgentTaskCreatedPayload,
+  AgentTaskDeletedPayload,
+  AgentTaskUpdatedPayload,
   AgentTerminatedPayload,
   EngineHealth,
   ImportClaudeMdResult,
@@ -34,6 +38,10 @@ export type {
   InterAgentMessageStatus,
   MemoryEntry,
   MemorySource,
+  StickyNote,
+  StickyNoteCreatedPayload,
+  StickyNoteDeletedPayload,
+  StickyNoteUpdatedPayload,
   SystemHealth,
   TokenUsage,
 } from './events.js';
@@ -45,5 +53,11 @@ export {
   EVENT_AGENT_INTER_AGENT_MESSAGE_FAILED,
   EVENT_AGENT_MEMORY_ADDED,
   EVENT_AGENT_STATUS_CHANGE,
+  EVENT_AGENT_TASK_CREATED,
+  EVENT_AGENT_TASK_DELETED,
+  EVENT_AGENT_TASK_UPDATED,
   EVENT_AGENT_TERMINATED,
+  EVENT_STICKY_NOTE_CREATED,
+  EVENT_STICKY_NOTE_DELETED,
+  EVENT_STICKY_NOTE_UPDATED,
 } from './events.js';

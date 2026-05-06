@@ -1,5 +1,6 @@
 import { invoke } from '@tauri-apps/api/core';
 import type {
+  ActivityEntry,
   Agent,
   BranchInfo,
   FileDiff,
@@ -7,7 +8,9 @@ import type {
   InterAgentMessage,
   MemoryEntry,
   Message,
+  StickyNote,
   SystemHealth,
+  Task,
   Team,
 } from '@orbit/types';
 
@@ -149,6 +152,79 @@ export function ipcAgentGetDiff(agentId: string): Promise<FileDiff[]> {
 
 export function ipcAgentGetBranchInfo(agentId: string): Promise<BranchInfo | null> {
   return invoke<BranchInfo | null>('agent_get_branch_info', { agentId });
+}
+
+// ─── Phase 7: tasks + sticky notes + activity feed ────────────────────────
+
+export interface CreateTaskInput {
+  agentId: string;
+  title: string;
+  description?: string | null;
+  status?: string | null;
+  priority?: string | null;
+}
+
+export function ipcTaskCreate(input: CreateTaskInput): Promise<Task> {
+  return invoke<Task>('task_create', { input });
+}
+
+export function ipcTaskList(agentId: string): Promise<Task[]> {
+  return invoke<Task[]>('task_list', { agentId });
+}
+
+export function ipcTaskListAll(limit?: number): Promise<Task[]> {
+  return invoke<Task[]>('task_list_all', { limit });
+}
+
+export interface UpdateTaskInput {
+  taskId: string;
+  title?: string | null;
+  description?: string | null;
+  status?: string | null;
+  priority?: string | null;
+}
+
+export function ipcTaskUpdate(input: UpdateTaskInput): Promise<Task> {
+  return invoke<Task>('task_update', { input });
+}
+
+export function ipcTaskDelete(taskId: string, agentId: string): Promise<void> {
+  return invoke<void>('task_delete', { taskId, agentId });
+}
+
+export interface CreateStickyNoteInput {
+  content: string;
+  positionX: number;
+  positionY: number;
+  color: string;
+}
+
+export function ipcStickyNoteCreate(input: CreateStickyNoteInput): Promise<StickyNote> {
+  return invoke<StickyNote>('sticky_note_create', { input });
+}
+
+export function ipcStickyNoteList(): Promise<StickyNote[]> {
+  return invoke<StickyNote[]>('sticky_note_list');
+}
+
+export interface UpdateStickyNoteInput {
+  noteId: string;
+  content?: string | null;
+  positionX?: number | null;
+  positionY?: number | null;
+  color?: string | null;
+}
+
+export function ipcStickyNoteUpdate(input: UpdateStickyNoteInput): Promise<StickyNote> {
+  return invoke<StickyNote>('sticky_note_update', { input });
+}
+
+export function ipcStickyNoteDelete(noteId: string): Promise<void> {
+  return invoke<void>('sticky_note_delete', { noteId });
+}
+
+export function ipcAgentGetActivityFeed(limit?: number): Promise<ActivityEntry[]> {
+  return invoke<ActivityEntry[]>('agent_get_activity_feed', { limit });
 }
 
 export function ipcSystemRevealPath(path: string): Promise<void> {

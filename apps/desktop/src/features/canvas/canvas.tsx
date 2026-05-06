@@ -16,8 +16,14 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { cn } from '@/lib/cn';
 import { useAgentsStore, deriveStatus, type XY } from '@/stores/agents';
 import { useUiStore } from '@/stores/ui-store';
-import { ipcAgentSetTeam, ipcAgentTerminate, ipcAgentUpdatePosition } from '@/lib/ipc';
+import {
+  ipcAgentSetTeam,
+  ipcAgentTerminate,
+  ipcAgentUpdatePosition,
+  ipcStickyNoteCreate,
+} from '@/lib/ipc';
 import { buildTeamRegions, findTeamAtPoint, NODE_CENTER_OFFSET } from './team-bounds';
+import { StickyNoteLayer } from './sticky-note-layer';
 import type { Agent, Message } from '@orbit/types';
 import { nodeTypes } from './node-types';
 import type { AgentNodeData } from './nodes/agent-node';
@@ -39,6 +45,23 @@ function snap(v: number, step: number): number {
 }
 
 const SNAP_STEP = 20;
+
+/** Phase 7: muted yellow-shifted palette for sticky notes. Picked
+ *  from a fixed set so notes read as Post-its rather than team
+ *  regions (which use cooler hues). */
+const STICKY_COLOR_PALETTE: readonly string[] = [
+  '#3b3825', // amber paper
+  '#3a3825', // butter
+  '#3d3a25', // honey
+  '#3a3a28', // pale lemon
+  '#3d3522', // toast
+  '#382f25', // cinnamon
+];
+
+function pickStickyColor(): string {
+  const idx = Math.floor(Math.random() * STICKY_COLOR_PALETTE.length);
+  return STICKY_COLOR_PALETTE[idx] ?? STICKY_COLOR_PALETTE[0]!;
+}
 const MIN_ZOOM = 0.25;
 const MAX_ZOOM = 2.0;
 
@@ -256,12 +279,35 @@ function CanvasInner({ onRequestSpawn }: Props): JSX.Element {
     [contextMenu, selectAgent, openRightPanelTab, terminate],
   );
 
-  const onPaneClick = useCallback(() => {
-    // Deselect on empty-canvas click, unless nothing is selected — in
-    // that case, we treat it as a deliberate empty click and still
-    // clear the "last centered" bookkeeping.
-    selectAgent(null);
-  }, [selectAgent]);
+  const upsertStickyNote = useAgentsStore((s) => s.upsertStickyNote);
+
+  const onPaneClick = useCallback(
+    (e: React.MouseEvent) => {
+      // Phase 7: shift-click empty canvas drops a sticky note at the
+      // clicked point. Otherwise it's a normal deselect.
+      if (e.shiftKey && containerRef.current) {
+        const rect = containerRef.current.getBoundingClientRect();
+        const flowPoint = flow.screenToFlowPosition({
+          x: e.clientX - rect.left,
+          y: e.clientY - rect.top,
+        });
+        const x = snap(flowPoint.x - 84, SNAP_STEP); // -84 centers the 168px note on cursor
+        const y = snap(flowPoint.y - 32, SNAP_STEP);
+        const color = pickStickyColor();
+        void ipcStickyNoteCreate({
+          content: '',
+          positionX: x,
+          positionY: y,
+          color,
+        })
+          .then((note) => upsertStickyNote(note))
+          .catch((err) => console.warn('failed to create sticky note', err));
+        return;
+      }
+      selectAgent(null);
+    },
+    [selectAgent, flow, upsertStickyNote],
+  );
 
   // Double-click empty canvas spawns an agent at the clicked position.
   const onPaneDoubleClick = useCallback(
@@ -310,6 +356,7 @@ function CanvasInner({ onRequestSpawn }: Props): JSX.Element {
       </ReactFlow>
       {isEmpty ? <EmptyCanvasPrompt /> : null}
       <TeamRegionLayer />
+      <StickyNoteLayer />
       <MessageFlightLayer />
       <AgentCountPill />
       <CanvasToolbar />

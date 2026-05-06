@@ -8,7 +8,13 @@ import {
   EVENT_AGENT_INTER_AGENT_MESSAGE_FAILED,
   EVENT_AGENT_MEMORY_ADDED,
   EVENT_AGENT_STATUS_CHANGE,
+  EVENT_AGENT_TASK_CREATED,
+  EVENT_AGENT_TASK_DELETED,
+  EVENT_AGENT_TASK_UPDATED,
   EVENT_AGENT_TERMINATED,
+  EVENT_STICKY_NOTE_CREATED,
+  EVENT_STICKY_NOTE_DELETED,
+  EVENT_STICKY_NOTE_UPDATED,
   type AgentAssistantMessagePersistedPayload,
   type AgentEventPayload,
   type AgentIdentityUpdatedPayload,
@@ -16,7 +22,13 @@ import {
   type AgentInterAgentMessageFailedPayload,
   type AgentMemoryAddedPayload,
   type AgentStatusChangePayload,
+  type AgentTaskCreatedPayload,
+  type AgentTaskDeletedPayload,
+  type AgentTaskUpdatedPayload,
   type AgentTerminatedPayload,
+  type StickyNoteCreatedPayload,
+  type StickyNoteDeletedPayload,
+  type StickyNoteUpdatedPayload,
 } from '@orbit/types';
 import { useAgentsStore } from '@/stores/agents';
 
@@ -32,6 +44,10 @@ export function useAgentEvents(): void {
   const addMemory = useAgentsStore((s) => s.addMemory);
   const setIdentityDirty = useAgentsStore((s) => s.setIdentityDirty);
   const upsertInterAgentMessage = useAgentsStore((s) => s.upsertInterAgentMessage);
+  const upsertTask = useAgentsStore((s) => s.upsertTask);
+  const removeTask = useAgentsStore((s) => s.removeTask);
+  const upsertStickyNote = useAgentsStore((s) => s.upsertStickyNote);
+  const removeStickyNote = useAgentsStore((s) => s.removeStickyNote);
 
   useEffect(() => {
     const unlisteners: Array<Promise<() => void>> = [
@@ -82,6 +98,25 @@ export function useAgentEvents(): void {
           `[orbit] inter-agent message failed: ${e.payload.fromAgentId} → ${e.payload.toAgentName} (${e.payload.reason}): ${e.payload.detail}`,
         );
       }),
+      // Phase 7: tasks + sticky notes.
+      listen<AgentTaskCreatedPayload>(EVENT_AGENT_TASK_CREATED, (e) => {
+        upsertTask(e.payload.task);
+      }),
+      listen<AgentTaskUpdatedPayload>(EVENT_AGENT_TASK_UPDATED, (e) => {
+        upsertTask(e.payload.task);
+      }),
+      listen<AgentTaskDeletedPayload>(EVENT_AGENT_TASK_DELETED, (e) => {
+        removeTask(e.payload.agentId, e.payload.taskId);
+      }),
+      listen<StickyNoteCreatedPayload>(EVENT_STICKY_NOTE_CREATED, (e) => {
+        upsertStickyNote(e.payload.note);
+      }),
+      listen<StickyNoteUpdatedPayload>(EVENT_STICKY_NOTE_UPDATED, (e) => {
+        upsertStickyNote(e.payload.note);
+      }),
+      listen<StickyNoteDeletedPayload>(EVENT_STICKY_NOTE_DELETED, (e) => {
+        removeStickyNote(e.payload.noteId);
+      }),
     ];
     return () => {
       for (const p of unlisteners) {
@@ -96,5 +131,9 @@ export function useAgentEvents(): void {
     addMemory,
     setIdentityDirty,
     upsertInterAgentMessage,
+    upsertTask,
+    removeTask,
+    upsertStickyNote,
+    removeStickyNote,
   ]);
 }

@@ -9,12 +9,13 @@ import { SpawnAgentDialog } from '@/features/agents/spawn-agent-dialog';
 import { AgentDetailPanel } from '@/features/agents/agent-detail-panel';
 import { SystemHealthSetupView } from '@/features/agents/system-health-banner';
 import { Canvas } from '@/features/canvas/canvas';
+import { TaskInbox } from '@/features/tasks/task-inbox';
 import type { XY } from '@/stores/agents';
 import { useKeyboardShortcut } from '@/hooks/use-keyboard-shortcut';
 import { useAgentEvents } from '@/hooks/use-agent-events';
 import { useUiStore } from '@/stores/ui-store';
 import { useAgentsStore } from '@/stores/agents';
-import { ipcAgentList, ipcSystemHealthCheck, ipcTeamList } from '@/lib/ipc';
+import { ipcAgentList, ipcStickyNoteList, ipcSystemHealthCheck, ipcTeamList } from '@/lib/ipc';
 import { cn } from '@/lib/cn';
 
 function ResizeHandle(): JSX.Element {
@@ -32,6 +33,7 @@ export function App(): JSX.Element {
   const sidebarOpen = useUiStore((s) => s.sidebarOpen);
   const rightPanelOpen = useUiStore((s) => s.rightPanelOpen);
   const canvasOpen = useUiStore((s) => s.canvasOpen);
+  const centerView = useUiStore((s) => s.centerView);
   const toggleSidebar = useUiStore((s) => s.toggleSidebar);
   const toggleRightPanel = useUiStore((s) => s.toggleRightPanel);
   const toggleCanvas = useUiStore((s) => s.toggleCanvas);
@@ -51,6 +53,7 @@ export function App(): JSX.Element {
 
   const hydrate = useAgentsStore((s) => s.hydrate);
   const hydrateTeams = useAgentsStore((s) => s.hydrateTeams);
+  const hydrateStickyNotes = useAgentsStore((s) => s.hydrateStickyNotes);
   const [spawnOpen, setSpawnOpen] = useState(false);
   const [spawnPosition, setSpawnPosition] = useState<XY | null>(null);
 
@@ -84,6 +87,16 @@ export function App(): JSX.Element {
       const teams = await ipcTeamList();
       hydrateTeams(teams);
       return teams;
+    },
+  });
+
+  useQuery({
+    queryKey: ['sticky-notes'],
+    enabled: Boolean(health.data?.engine.available && health.data?.engine.authenticated),
+    queryFn: async () => {
+      const notes = await ipcStickyNoteList();
+      hydrateStickyNotes(notes);
+      return notes;
     },
   });
 
@@ -129,7 +142,13 @@ export function App(): JSX.Element {
         ) : null}
 
         <Panel defaultSize={rightPanelOpen ? 58 : 82} minSize={30}>
-          {canvasOpen ? <Canvas onRequestSpawn={openSpawnDialog} /> : <CanvasPlaceholder />}
+          {centerView === 'task-inbox' ? (
+            <TaskInbox />
+          ) : canvasOpen ? (
+            <Canvas onRequestSpawn={openSpawnDialog} />
+          ) : (
+            <CanvasPlaceholder />
+          )}
         </Panel>
 
         {rightPanelOpen ? (

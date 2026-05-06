@@ -47,6 +47,8 @@ function reset(): void {
     teams: {},
     orderedTeamIds: [],
     focusedTeamId: null,
+    tasksByAgent: {},
+    stickyNotes: {},
   });
 }
 

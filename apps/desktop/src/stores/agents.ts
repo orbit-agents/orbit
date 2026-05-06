@@ -5,6 +5,8 @@ import type {
   InterAgentMessage,
   MemoryEntry,
   Message,
+  StickyNote,
+  Task,
   Team,
   TokenUsage,
 } from '@orbit/types';
@@ -13,6 +15,8 @@ export type AgentId = string;
 export type MemoryEntryId = string;
 export type InterAgentMessageId = string;
 export type TeamId = string;
+export type TaskId = string;
+export type StickyNoteId = string;
 
 export interface XY {
   x: number;
@@ -83,6 +87,15 @@ interface AgentsState {
    *  the sidebar's Teams section to request "show me this team". */
   focusedTeamId: TeamId | null;
 
+  /** Phase 7: per-agent task list. Both agent-emitted (via the
+   *  `<task>` pseudo-tool) and human-edited tasks land here, keyed
+   *  by the agent the task belongs to. */
+  tasksByAgent: Record<AgentId, Task[]>;
+
+  /** Phase 7: sticky notes are not per-agent — they're global canvas
+   *  annotations. Keyed by id for O(1) updates from events. */
+  stickyNotes: Record<StickyNoteId, StickyNote>;
+
   hydrate: (agents: Agent[]) => void;
   upsertAgent: (agent: Agent) => void;
   removeAgent: (agentId: AgentId) => void;
@@ -105,6 +118,14 @@ interface AgentsState {
   removeTeam: (teamId: TeamId) => void;
   setAgentTeam: (agentId: AgentId, teamId: TeamId | null) => void;
   focusTeam: (teamId: TeamId | null) => void;
+
+  setTasks: (agentId: AgentId, tasks: Task[]) => void;
+  upsertTask: (task: Task) => void;
+  removeTask: (agentId: AgentId, taskId: TaskId) => void;
+
+  hydrateStickyNotes: (notes: StickyNote[]) => void;
+  upsertStickyNote: (note: StickyNote) => void;
+  removeStickyNote: (noteId: StickyNoteId) => void;
 
   setMessages: (agentId: AgentId, messages: Message[]) => void;
   appendPersistedMessage: (agentId: AgentId, message: Message) => void;
@@ -137,6 +158,8 @@ export const useAgentsStore = create<AgentsState>((set, get) => ({
   teams: {},
   orderedTeamIds: [],
   focusedTeamId: null,
+  tasksByAgent: {},
+  stickyNotes: {},
 
   hydrate: (agents) =>
     set(() => {
@@ -175,6 +198,7 @@ export const useAgentsStore = create<AgentsState>((set, get) => ({
       const { [agentId]: _sc, ...restScroll } = s.chatScrollByAgent;
       const { [agentId]: _mem, ...restMemories } = s.memoriesByAgent;
       const { [agentId]: _iam, ...restIam } = s.interAgentMessagesByAgent;
+      const { [agentId]: _tasks, ...restTasks } = s.tasksByAgent;
       return {
         agents: restAgents,
         orderedAgentIds: order,
@@ -185,6 +209,7 @@ export const useAgentsStore = create<AgentsState>((set, get) => ({
         chatScrollByAgent: restScroll,
         memoriesByAgent: restMemories,
         interAgentMessagesByAgent: restIam,
+        tasksByAgent: restTasks,
       };
     }),
 
@@ -392,6 +417,43 @@ export const useAgentsStore = create<AgentsState>((set, get) => ({
     }),
 
   focusTeam: (teamId) => set(() => ({ focusedTeamId: teamId })),
+
+  setTasks: (agentId, tasks) =>
+    set((s) => ({ tasksByAgent: { ...s.tasksByAgent, [agentId]: tasks } })),
+
+  upsertTask: (task) =>
+    set((s) => {
+      const list = s.tasksByAgent[task.agentId] ?? [];
+      const idx = list.findIndex((t) => t.id === task.id);
+      const next = idx === -1 ? [task, ...list] : list.map((t) => (t.id === task.id ? task : t));
+      return { tasksByAgent: { ...s.tasksByAgent, [task.agentId]: next } };
+    }),
+
+  removeTask: (agentId, taskId) =>
+    set((s) => {
+      const list = s.tasksByAgent[agentId] ?? [];
+      return {
+        tasksByAgent: {
+          ...s.tasksByAgent,
+          [agentId]: list.filter((t) => t.id !== taskId),
+        },
+      };
+    }),
+
+  hydrateStickyNotes: (notes) =>
+    set(() => {
+      const map: Record<StickyNoteId, StickyNote> = {};
+      for (const n of notes) map[n.id] = n;
+      return { stickyNotes: map };
+    }),
+
+  upsertStickyNote: (note) => set((s) => ({ stickyNotes: { ...s.stickyNotes, [note.id]: note } })),
+
+  removeStickyNote: (noteId) =>
+    set((s) => {
+      const { [noteId]: _gone, ...rest } = s.stickyNotes;
+      return { stickyNotes: rest };
+    }),
 
   applyEvent: (agentId, event) => {
     const current = get().streamingByAgent[agentId] ?? null;

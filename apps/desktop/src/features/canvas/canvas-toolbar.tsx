@@ -1,14 +1,25 @@
 import { useReactFlow } from '@xyflow/react';
 import {
-  LayoutGridIcon,
   MaximizeIcon,
   PlusIcon,
   RotateCcwIcon,
+  StickyNoteIcon,
   UsersIcon,
   ZoomInIcon,
   ZoomOutIcon,
 } from 'lucide-react';
 import { cn } from '@/lib/cn';
+import { ipcStickyNoteCreate } from '@/lib/ipc';
+import { useAgentsStore } from '@/stores/agents';
+
+const STICKY_COLOR_PALETTE: readonly string[] = [
+  '#3b3825',
+  '#3a3825',
+  '#3d3a25',
+  '#3a3a28',
+  '#3d3522',
+  '#382f25',
+];
 
 interface ButtonProps {
   onClick?: () => void;
@@ -49,6 +60,23 @@ function Separator(): JSX.Element {
  */
 export function CanvasToolbar(): JSX.Element {
   const flow = useReactFlow();
+  const upsertStickyNote = useAgentsStore((s) => s.upsertStickyNote);
+  const createStickyAtCenter = (): void => {
+    // Drop the new note at the current viewport center.
+    const vp = flow.getViewport();
+    const screenCx = window.innerWidth / 2;
+    const screenCy = window.innerHeight / 2;
+    const center = flow.screenToFlowPosition({ x: screenCx, y: screenCy });
+    void vp; // viewport already factored into screenToFlowPosition
+    const x = Math.round((center.x - 84) / 20) * 20;
+    const y = Math.round((center.y - 32) / 20) * 20;
+    const color =
+      STICKY_COLOR_PALETTE[Math.floor(Math.random() * STICKY_COLOR_PALETTE.length)] ??
+      STICKY_COLOR_PALETTE[0]!;
+    void ipcStickyNoteCreate({ content: '', positionX: x, positionY: y, color })
+      .then((note) => upsertStickyNote(note))
+      .catch((err) => console.warn('failed to create sticky note', err));
+  };
   return (
     <div
       className={cn(
@@ -94,10 +122,10 @@ export function CanvasToolbar(): JSX.Element {
         disabled
       />
       <ToolbarButton
-        icon={LayoutGridIcon}
-        label="Sticky note (Phase 7)"
-        title="Sticky note — coming in Phase 7"
-        disabled
+        icon={StickyNoteIcon}
+        label="Add sticky note"
+        title="Add sticky note (or shift-click empty canvas)"
+        onClick={createStickyAtCenter}
       />
       <Separator />
       <ToolbarButton icon={PlusIcon} label="Toolbar idle indicator" disabled title="" />

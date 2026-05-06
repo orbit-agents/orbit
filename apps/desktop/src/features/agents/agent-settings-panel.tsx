@@ -11,6 +11,7 @@ import { AdvancedSection } from './identity/advanced-section';
 import { FolderAccess } from './identity/folder-access';
 import { InboxList } from './inbox/inbox-list';
 import { BranchSection } from './diff/branch-section';
+import { TasksList } from './tasks/tasks-list';
 
 const SOUL_PLACEHOLDER =
   "I'm a senior backend engineer. I write Go, design APIs, and think in terms of data flow and failure modes. I prefer shipping a correct minimal implementation over a feature-rich fragile one. When unsure about a requirement, I ask rather than assume.";
@@ -34,6 +35,10 @@ export function AgentSettingsPanel(): JSX.Element {
   );
   const inboxCount = useAgentsStore((s) =>
     agent ? (s.interAgentMessagesByAgent[agent.id]?.length ?? 0) : 0,
+  );
+  const taskCount = useAgentsStore((s) => (agent ? (s.tasksByAgent[agent.id]?.length ?? 0) : 0));
+  const openTaskCount = useAgentsStore((s) =>
+    agent ? (s.tasksByAgent[agent.id] ?? []).filter((t) => t.status !== 'done').length : 0,
   );
 
   const updateMutation = useMutation({
@@ -129,6 +134,13 @@ export function AgentSettingsPanel(): JSX.Element {
           onSave={onSavePurpose}
           placeholder={PURPOSE_PLACEHOLDER}
         />
+      </AccordionSection>
+
+      <AccordionSection
+        title="Tasks"
+        summary={taskCount === 0 ? 'No tasks' : `${openTaskCount} open · ${taskCount} total`}
+      >
+        <TasksList agentId={agent.id} />
       </AccordionSection>
 
       <AccordionSection
