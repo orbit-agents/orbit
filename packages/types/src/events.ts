@@ -85,6 +85,38 @@ export interface ImportClaudeMdResult {
   sourcePath: string | null;
 }
 
+/** Phase 6: per-file diff entry returned by agent_get_diff. */
+export type FileStatus = 'added' | 'modified' | 'deleted' | 'renamed' | 'untracked';
+
+export interface DiffLine {
+  origin: string;
+  content: string;
+  oldLineno: number | null;
+  newLineno: number | null;
+}
+
+export interface DiffHunk {
+  header: string;
+  lines: DiffLine[];
+}
+
+export interface FileDiff {
+  path: string;
+  status: string;
+  additions: number;
+  deletions: number;
+  hunks: DiffHunk[];
+}
+
+export interface BranchInfo {
+  branch: string;
+  sourceRepo: string;
+  baseBranch: string | null;
+  baseRef: string;
+  currentCommit: string;
+  worktreePath: string;
+}
+
 /** One row of the `inter_agent_messages` audit table. */
 export type InterAgentMessageStatus = 'pending' | 'delivered' | 'acknowledged' | 'failed';
 

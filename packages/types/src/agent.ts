@@ -43,6 +43,16 @@ export interface Agent {
   positionX: number;
   positionY: number;
 
+  // Phase 6 — git isolation. `hasWorktree = 0` means the agent works
+  // directly inside `workingDir` (Phase 1 behavior, no branch).
+  // `hasWorktree = 1` means `workingDir` IS the worktree path and the
+  // four `worktree*` fields are populated.
+  hasWorktree: number;
+  worktreePath: string | null;
+  worktreeBranch: string | null;
+  worktreeSourceRepo: string | null;
+  worktreeBaseRef: string | null;
+
   createdAt: string;
   updatedAt: string;
 }

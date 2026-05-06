@@ -3,11 +3,13 @@ import { useUiStore, type RightPanelTab } from '@/stores/ui-store';
 import { useAgentsStore } from '@/stores/agents';
 import { AgentChatPanel } from './agent-chat-panel';
 import { AgentSettingsPanel } from './agent-settings-panel';
+import { AgentDiffPanel } from './diff/agent-diff-panel';
 import { IdentityPendingPill } from './identity/identity-pending-pill';
 
 const TABS: { id: RightPanelTab; label: string }[] = [
   { id: 'chat', label: 'Chat' },
   { id: 'settings', label: 'Settings' },
+  { id: 'diff', label: 'Diff' },
 ];
 
 /**
@@ -53,7 +55,13 @@ export function AgentDetailPanel(): JSX.Element {
         ) : null}
       </nav>
       <div className="min-h-0 flex-1">
-        {tab === 'chat' ? <AgentChatPanel /> : <AgentSettingsPanel />}
+        {tab === 'chat' ? (
+          <AgentChatPanel />
+        ) : tab === 'diff' ? (
+          <AgentDiffPanel />
+        ) : (
+          <AgentSettingsPanel />
+        )}
       </div>
     </aside>
   );

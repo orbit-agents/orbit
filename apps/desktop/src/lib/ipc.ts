@@ -1,6 +1,8 @@
 import { invoke } from '@tauri-apps/api/core';
 import type {
   Agent,
+  BranchInfo,
+  FileDiff,
   ImportClaudeMdResult,
   InterAgentMessage,
   MemoryEntry,
@@ -137,6 +139,20 @@ export function ipcAgentUpdateFolderAccess(agentId: string, folders: string[]): 
   return invoke<void>('agent_update_folder_access', {
     input: { agentId, folders },
   });
+}
+
+// ─── Phase 6: git diff / branch info ──────────────────────────────────────
+
+export function ipcAgentGetDiff(agentId: string): Promise<FileDiff[]> {
+  return invoke<FileDiff[]>('agent_get_diff', { agentId });
+}
+
+export function ipcAgentGetBranchInfo(agentId: string): Promise<BranchInfo | null> {
+  return invoke<BranchInfo | null>('agent_get_branch_info', { agentId });
+}
+
+export function ipcSystemRevealPath(path: string): Promise<void> {
+  return invoke<void>('system_reveal_path', { path });
 }
 
 export function ipcSystemHealthCheck(): Promise<SystemHealth> {

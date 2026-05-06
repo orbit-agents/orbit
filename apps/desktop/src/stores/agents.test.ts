@@ -19,6 +19,11 @@ function makeAgent(id: string): Agent {
     teamId: null,
     positionX: 0,
     positionY: 0,
+    hasWorktree: 0,
+    worktreePath: null,
+    worktreeBranch: null,
+    worktreeSourceRepo: null,
+    worktreeBaseRef: null,
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
   };

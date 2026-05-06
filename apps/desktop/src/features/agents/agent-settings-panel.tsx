@@ -10,6 +10,7 @@ import { MemoryList } from './identity/memory-list';
 import { AdvancedSection } from './identity/advanced-section';
 import { FolderAccess } from './identity/folder-access';
 import { InboxList } from './inbox/inbox-list';
+import { BranchSection } from './diff/branch-section';
 
 const SOUL_PLACEHOLDER =
   "I'm a senior backend engineer. I write Go, design APIs, and think in terms of data flow and failure modes. I prefer shipping a correct minimal implementation over a feature-rich fragile one. When unsure about a requirement, I ask rather than assume.";
@@ -149,6 +150,20 @@ export function AgentSettingsPanel(): JSX.Element {
           agentId={agent.id}
           workingDir={agent.workingDir}
           rawFolderAccess={agent.folderAccess}
+        />
+      </AccordionSection>
+
+      <AccordionSection
+        title="Branch"
+        summary={
+          agent.hasWorktree ? (agent.worktreeBranch ?? 'git worktree') : 'Not in a Git worktree'
+        }
+      >
+        <BranchSection
+          agentId={agent.id}
+          hasWorktree={agent.hasWorktree !== 0}
+          worktreePath={agent.worktreePath}
+          worktreeBranch={agent.worktreeBranch}
         />
       </AccordionSection>
 

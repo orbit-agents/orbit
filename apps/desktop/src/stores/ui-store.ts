@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 
-export type RightPanelTab = 'chat' | 'settings';
+export type RightPanelTab = 'chat' | 'settings' | 'diff';
 
 interface UiState {
   sidebarOpen: boolean;
