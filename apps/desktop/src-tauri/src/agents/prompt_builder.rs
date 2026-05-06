@@ -201,9 +201,15 @@ mod tests {
             entry("m2", "table is usres not users"),
         ];
         let p = b.build();
+        let tailwind_idx = p.find("use Tailwind").unwrap();
         let usres_idx = p.find("table is usres").unwrap();
-        let tail_idx = p.find("use Tailwind").unwrap();
-        assert!(usres_idx < tail_idx, "memory should render in given order");
+        // The first entry passed in (`use Tailwind`) renders first in the
+        // prompt; the caller is responsible for passing memories in the
+        // most-recent-first order the prompt should display them in.
+        assert!(
+            tailwind_idx < usres_idx,
+            "memory should render in given order"
+        );
         assert!(p.contains("1. use Tailwind v3"));
         assert!(p.contains("2. table is usres not users"));
     }

@@ -389,7 +389,6 @@ pub async fn list_messages_for_agent(
 
 #[cfg(test)]
 mod tests {
-    use super::super::*;
     use super::*;
 
     async fn memory_pool() -> sqlx::SqlitePool {

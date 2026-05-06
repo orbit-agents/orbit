@@ -67,7 +67,9 @@ struct AgentProcess {
     /// `send_message` and cleared by the stdout reader when it sees the
     /// terminal event.
     turn_sender: Arc<Mutex<Option<mpsc::Sender<AgentEvent>>>>,
-    /// Rolling tail of the child's stderr for diagnostics.
+    /// Rolling tail of the child's stderr for diagnostics. Held for the
+    /// life of the process; surfaced in error reports in a follow-up.
+    #[allow(dead_code)]
     stderr_ring: Arc<Mutex<Vec<u8>>>,
 }
 
@@ -268,12 +270,22 @@ impl AgentEngine for ClaudeCodeEngine {
         cmd.arg("--version");
         configure_child_platform(&mut cmd);
 
-        let output = cmd.output().await.map_err(|e| {
-            EngineError::Io(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                format!("failed to run `{} --version`: {e}", binary.display()),
-            ))
-        })?;
+        // A missing binary at the override path produces NotFound from
+        // tokio's spawn; treat that the same as resolution failure so the
+        // setup view can render the install instructions instead of
+        // surfacing an error.
+        let output = match cmd.output().await {
+            Ok(o) => o,
+            Err(e) => {
+                return Ok(EngineHealth {
+                    available: false,
+                    version: None,
+                    authenticated: false,
+                    details: format!("failed to run `{} --version`: {e}", binary.display()),
+                    executable_path: Some(binary),
+                });
+            }
+        };
 
         if !output.status.success() {
             return Ok(EngineHealth {
@@ -286,6 +298,7 @@ impl AgentEngine for ClaudeCodeEngine {
         }
 
         let version = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        let short = version_short(&version).to_string();
 
         // Claude Code stores credentials on first run. We probe auth by
         // running a cheap no-op and watching for the specific auth error.
@@ -295,7 +308,7 @@ impl AgentEngine for ClaudeCodeEngine {
             available: true,
             version: Some(version),
             authenticated: true,
-            details: format!("claude {} at {}", version_short(&version), binary.display()),
+            details: format!("claude {short} at {}", binary.display()),
             executable_path: Some(binary),
         })
     }
@@ -577,11 +590,12 @@ printf '%s\n' '{"type":"result","subtype":"success","usage":{"input_tokens":1,"o
     #[tokio::test]
     async fn send_message_to_unknown_agent_errors() {
         let engine = ClaudeCodeEngine::new();
-        let err = engine
-            .send_message(&"ghost".into(), "hi", None)
-            .await
-            .unwrap_err();
-        assert!(matches!(err, EngineError::UnknownAgent(_)));
+        // `BoxStream` doesn't implement Debug, so we can't use `unwrap_err`.
+        match engine.send_message(&"ghost".into(), "hi", None).await {
+            Err(EngineError::UnknownAgent(_)) => {}
+            Err(other) => panic!("expected UnknownAgent, got {other:?}"),
+            Ok(_) => panic!("expected an error"),
+        }
     }
 
     #[tokio::test]
