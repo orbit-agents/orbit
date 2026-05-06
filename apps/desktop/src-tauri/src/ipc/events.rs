@@ -8,10 +8,18 @@
 use serde::{Deserialize, Serialize};
 
 use crate::agents::engine::{AgentEvent, AgentId};
+use crate::db::models::{MemoryEntry, Message};
 
 pub const EVENT_AGENT_EVENT: &str = "agent:event";
 pub const EVENT_AGENT_STATUS_CHANGE: &str = "agent:status_change";
 pub const EVENT_AGENT_TERMINATED: &str = "agent:terminated";
+pub const EVENT_AGENT_MEMORY_ADDED: &str = "agent:memory_added";
+pub const EVENT_AGENT_IDENTITY_UPDATED: &str = "agent:identity_updated";
+/// Fired after `TurnComplete` once the assistant message has been
+/// extracted, cleaned of `<remember>` markers, and persisted. The
+/// frontend treats this as the cue to swap the streaming bubble for
+/// the persisted row and clear the streaming buffer.
+pub const EVENT_AGENT_ASSISTANT_MESSAGE_PERSISTED: &str = "agent:assistant_message_persisted";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -32,4 +40,27 @@ pub struct AgentStatusChangePayload {
 pub struct AgentTerminatedPayload {
     pub agent_id: AgentId,
     pub reason: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentMemoryAddedPayload {
+    pub agent_id: AgentId,
+    pub entry: MemoryEntry,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentIdentityUpdatedPayload {
+    pub agent_id: AgentId,
+    /// Mirrors `agents.identity_dirty` after the change. The frontend
+    /// uses this to show / clear the "Identity pending" pill.
+    pub identity_dirty: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentAssistantMessagePersistedPayload {
+    pub agent_id: AgentId,
+    pub message: Message,
 }

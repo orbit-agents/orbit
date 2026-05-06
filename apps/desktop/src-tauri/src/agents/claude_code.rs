@@ -136,6 +136,12 @@ impl AgentEngine for ClaudeCodeEngine {
         if let Some(session) = &config.resume_session_id {
             cmd.arg("--resume").arg(session);
         }
+        if let Some(prompt) = &config.system_prompt {
+            // `--append-system-prompt` keeps Claude Code's default system
+            // prompt (tool docs etc.) and appends our identity block, so
+            // the model still knows how to use Read/Edit/Bash/etc.
+            cmd.arg("--append-system-prompt").arg(prompt);
+        }
 
         cmd.stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
@@ -191,6 +197,7 @@ impl AgentEngine for ClaudeCodeEngine {
         &self,
         agent_id: &AgentId,
         message: &str,
+        prepend_system_update: Option<&str>,
     ) -> Result<BoxStream<'static, AgentEvent>, EngineError> {
         let agent = self.get_agent(agent_id).await?;
 
@@ -200,11 +207,18 @@ impl AgentEngine for ClaudeCodeEngine {
             *slot = Some(turn_tx);
         }
 
+        // Identity updates land in-band as a `<system_update>` block
+        // prepended to the user text — see ADR 0005 / prompt_builder.rs.
+        let text = match prepend_system_update {
+            Some(prefix) if !prefix.is_empty() => format!("{prefix}{message}"),
+            _ => message.to_string(),
+        };
+
         let payload = serde_json::json!({
             "type": "user",
             "message": {
                 "role": "user",
-                "content": [{"type": "text", "text": message}]
+                "content": [{"type": "text", "text": text}]
             }
         })
         .to_string();
@@ -533,11 +547,12 @@ printf '%s\n' '{"type":"result","subtype":"success","usage":{"input_tokens":1,"o
                 working_dir: working_dir.clone(),
                 model_override: None,
                 resume_session_id: None,
+                system_prompt: None,
             })
             .await
             .unwrap();
 
-        let stream = engine.send_message(&"a1".into(), "hi").await.unwrap();
+        let stream = engine.send_message(&"a1".into(), "hi", None).await.unwrap();
         let events: Vec<AgentEvent> = stream.collect().await;
 
         assert!(
@@ -563,7 +578,7 @@ printf '%s\n' '{"type":"result","subtype":"success","usage":{"input_tokens":1,"o
     async fn send_message_to_unknown_agent_errors() {
         let engine = ClaudeCodeEngine::new();
         let err = engine
-            .send_message(&"ghost".into(), "hi")
+            .send_message(&"ghost".into(), "hi", None)
             .await
             .unwrap_err();
         assert!(matches!(err, EngineError::UnknownAgent(_)));

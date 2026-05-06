@@ -8,6 +8,8 @@
 
 pub mod claude_code;
 pub mod engine;
+pub mod prompt_builder;
+pub mod remember;
 pub mod stream_json;
 pub mod supervisor;
 

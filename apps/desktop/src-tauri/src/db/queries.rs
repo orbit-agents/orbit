@@ -5,7 +5,7 @@
 use chrono::{DateTime, Utc};
 use sqlx::SqlitePool;
 
-use super::models::{Agent, Conversation, Message, MessageRole};
+use super::models::{Agent, Conversation, MemoryEntry, MemorySource, Message, MessageRole};
 use super::DbError;
 
 pub struct NewAgent<'a> {
@@ -190,6 +190,184 @@ pub async fn insert_message(pool: &SqlitePool, new: NewMessage<'_>) -> Result<Me
     })
 }
 
+// ─── Phase 3: identity ────────────────────────────────────────────────────
+
+/// Persist new soul/purpose values and mark the agent's identity as dirty
+/// so the supervisor injects them on the next user turn. Either argument
+/// may be `None` to leave that field untouched.
+pub async fn update_agent_identity(
+    pool: &SqlitePool,
+    id: &str,
+    soul: Option<&str>,
+    purpose: Option<&str>,
+) -> Result<(), DbError> {
+    // Two narrow updates rather than one wide one — avoids overwriting an
+    // unrelated field with NULL when the caller only wants to set one.
+    let now = Utc::now();
+    if let Some(s) = soul {
+        sqlx::query("UPDATE agents SET soul = ?, identity_dirty = 1, updated_at = ? WHERE id = ?")
+            .bind(s)
+            .bind(now)
+            .bind(id)
+            .execute(pool)
+            .await?;
+    }
+    if let Some(p) = purpose {
+        sqlx::query(
+            "UPDATE agents SET purpose = ?, identity_dirty = 1, updated_at = ? WHERE id = ?",
+        )
+        .bind(p)
+        .bind(now)
+        .bind(id)
+        .execute(pool)
+        .await?;
+    }
+    Ok(())
+}
+
+pub async fn set_identity_dirty(pool: &SqlitePool, id: &str, dirty: bool) -> Result<(), DbError> {
+    sqlx::query("UPDATE agents SET identity_dirty = ?, updated_at = ? WHERE id = ?")
+        .bind(if dirty { 1_i64 } else { 0_i64 })
+        .bind(Utc::now())
+        .bind(id)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+// ─── Phase 3: memory ──────────────────────────────────────────────────────
+
+pub struct NewMemoryEntry<'a> {
+    pub id: &'a str,
+    pub agent_id: &'a str,
+    pub content: &'a str,
+    pub category: Option<&'a str>,
+    pub source: MemorySource,
+}
+
+pub async fn insert_memory_entry(
+    pool: &SqlitePool,
+    new: NewMemoryEntry<'_>,
+) -> Result<MemoryEntry, DbError> {
+    let now = Utc::now();
+    sqlx::query(
+        "INSERT INTO memory_entries (id, agent_id, content, category, source, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?)",
+    )
+    .bind(new.id)
+    .bind(new.agent_id)
+    .bind(new.content)
+    .bind(new.category)
+    .bind(new.source.as_str())
+    .bind(now)
+    .bind(now)
+    .execute(pool)
+    .await?;
+
+    // The insert itself stamps identity_dirty so the next turn picks up the
+    // new memory without an explicit identity update.
+    set_identity_dirty(pool, new.agent_id, true).await?;
+
+    Ok(MemoryEntry {
+        id: new.id.to_string(),
+        agent_id: new.agent_id.to_string(),
+        content: new.content.to_string(),
+        category: new.category.map(|s| s.to_string()),
+        source: new.source.as_str().to_string(),
+        created_at: now,
+        updated_at: now,
+    })
+}
+
+pub async fn update_memory_entry(
+    pool: &SqlitePool,
+    id: &str,
+    content: &str,
+) -> Result<MemoryEntry, DbError> {
+    let now = Utc::now();
+    sqlx::query("UPDATE memory_entries SET content = ?, updated_at = ? WHERE id = ?")
+        .bind(content)
+        .bind(now)
+        .bind(id)
+        .execute(pool)
+        .await?;
+    let row = sqlx::query_as::<_, MemoryEntry>("SELECT * FROM memory_entries WHERE id = ?")
+        .bind(id)
+        .fetch_optional(pool)
+        .await?
+        .ok_or_else(|| DbError::Sqlx(sqlx::Error::RowNotFound))?;
+    set_identity_dirty(pool, &row.agent_id, true).await?;
+    Ok(row)
+}
+
+pub async fn delete_memory_entry(pool: &SqlitePool, id: &str) -> Result<(), DbError> {
+    // Capture the agent id before deleting so we can flip the dirty flag.
+    let agent_id: Option<(String,)> =
+        sqlx::query_as("SELECT agent_id FROM memory_entries WHERE id = ?")
+            .bind(id)
+            .fetch_optional(pool)
+            .await?;
+    sqlx::query("DELETE FROM memory_entries WHERE id = ?")
+        .bind(id)
+        .execute(pool)
+        .await?;
+    if let Some((aid,)) = agent_id {
+        set_identity_dirty(pool, &aid, true).await?;
+    }
+    Ok(())
+}
+
+/// List memory entries for an agent, newest first. If `search` is supplied,
+/// case-insensitive substring filter on `content`.
+pub async fn list_memory_entries(
+    pool: &SqlitePool,
+    agent_id: &str,
+    search: Option<&str>,
+) -> Result<Vec<MemoryEntry>, DbError> {
+    if let Some(q) = search.filter(|s| !s.trim().is_empty()) {
+        let pattern = format!("%{}%", q.to_lowercase());
+        let rows = sqlx::query_as::<_, MemoryEntry>(
+            "SELECT * FROM memory_entries
+             WHERE agent_id = ? AND lower(content) LIKE ?
+             ORDER BY created_at DESC",
+        )
+        .bind(agent_id)
+        .bind(pattern)
+        .fetch_all(pool)
+        .await?;
+        Ok(rows)
+    } else {
+        let rows = sqlx::query_as::<_, MemoryEntry>(
+            "SELECT * FROM memory_entries
+             WHERE agent_id = ?
+             ORDER BY created_at DESC",
+        )
+        .bind(agent_id)
+        .fetch_all(pool)
+        .await?;
+        Ok(rows)
+    }
+}
+
+/// The N most recent memory entries (used by the system prompt builder).
+pub async fn recent_memory_entries(
+    pool: &SqlitePool,
+    agent_id: &str,
+    limit: i64,
+) -> Result<Vec<MemoryEntry>, DbError> {
+    let rows = sqlx::query_as::<_, MemoryEntry>(
+        "SELECT * FROM memory_entries
+         WHERE agent_id = ?
+         ORDER BY created_at DESC
+         LIMIT ?",
+    )
+    .bind(agent_id)
+    .bind(limit)
+    .fetch_all(pool)
+    .await?;
+    Ok(rows)
+}
+
 pub async fn list_messages_for_agent(
     pool: &SqlitePool,
     agent_id: &str,
@@ -352,6 +530,146 @@ mod tests {
         assert_eq!(msgs.len(), 3);
         assert_eq!(msgs[0].id, "m-0");
         assert_eq!(msgs[2].id, "m-2");
+    }
+
+    async fn insert_test_agent(pool: &SqlitePool, id: &str) {
+        insert_agent(
+            pool,
+            NewAgent {
+                id,
+                name: "A",
+                emoji: "🌟",
+                color: "#5E6AD2",
+                working_dir: "/tmp",
+                model_override: None,
+                position_x: 0.0,
+                position_y: 0.0,
+            },
+        )
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn update_identity_marks_dirty() {
+        let pool = memory_pool().await;
+        insert_test_agent(&pool, "a").await;
+
+        update_agent_identity(&pool, "a", Some("calm engineer"), None)
+            .await
+            .unwrap();
+
+        let got = get_agent(&pool, "a").await.unwrap().unwrap();
+        assert_eq!(got.soul.as_deref(), Some("calm engineer"));
+        assert!(got.purpose.is_none());
+        assert_eq!(got.identity_dirty, 1);
+
+        set_identity_dirty(&pool, "a", false).await.unwrap();
+        let cleared = get_agent(&pool, "a").await.unwrap().unwrap();
+        assert_eq!(cleared.identity_dirty, 0);
+    }
+
+    #[tokio::test]
+    async fn memory_insert_list_search_update_delete() {
+        let pool = memory_pool().await;
+        insert_test_agent(&pool, "a").await;
+
+        for (i, content) in [
+            "use Tailwind v3",
+            "table is named usres not users",
+            "uuid v4",
+        ]
+        .iter()
+        .enumerate()
+        {
+            insert_memory_entry(
+                &pool,
+                NewMemoryEntry {
+                    id: &format!("m-{i}"),
+                    agent_id: "a",
+                    content,
+                    category: None,
+                    source: MemorySource::User,
+                },
+            )
+            .await
+            .unwrap();
+            // Force ordering: DateTime<Utc>::now() at sub-ms can collide on
+            // some platforms; nudge by one ms.
+            tokio::time::sleep(std::time::Duration::from_millis(2)).await;
+        }
+
+        let all = list_memory_entries(&pool, "a", None).await.unwrap();
+        assert_eq!(all.len(), 3);
+        // Newest first.
+        assert_eq!(all[0].content, "uuid v4");
+
+        let usres = list_memory_entries(&pool, "a", Some("USRES"))
+            .await
+            .unwrap();
+        assert_eq!(usres.len(), 1);
+        assert_eq!(usres[0].content, "table is named usres not users");
+
+        let updated = update_memory_entry(&pool, "m-0", "use Tailwind v3 only")
+            .await
+            .unwrap();
+        assert_eq!(updated.content, "use Tailwind v3 only");
+
+        delete_memory_entry(&pool, "m-1").await.unwrap();
+        let remaining = list_memory_entries(&pool, "a", None).await.unwrap();
+        assert_eq!(remaining.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn recent_memory_caps_to_limit() {
+        let pool = memory_pool().await;
+        insert_test_agent(&pool, "a").await;
+
+        for i in 0..5 {
+            insert_memory_entry(
+                &pool,
+                NewMemoryEntry {
+                    id: &format!("m-{i}"),
+                    agent_id: "a",
+                    content: &format!("entry {i}"),
+                    category: None,
+                    source: MemorySource::Agent,
+                },
+            )
+            .await
+            .unwrap();
+            tokio::time::sleep(std::time::Duration::from_millis(2)).await;
+        }
+
+        let recent = recent_memory_entries(&pool, "a", 3).await.unwrap();
+        assert_eq!(recent.len(), 3);
+        assert_eq!(recent[0].content, "entry 4");
+        assert_eq!(recent[2].content, "entry 2");
+    }
+
+    #[tokio::test]
+    async fn deleting_agent_cascades_memory() {
+        let pool = memory_pool().await;
+        insert_test_agent(&pool, "a").await;
+        insert_memory_entry(
+            &pool,
+            NewMemoryEntry {
+                id: "m-1",
+                agent_id: "a",
+                content: "x",
+                category: None,
+                source: MemorySource::User,
+            },
+        )
+        .await
+        .unwrap();
+
+        delete_agent(&pool, "a").await.unwrap();
+        let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM memory_entries")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(count.0, 0);
     }
 
     #[tokio::test]

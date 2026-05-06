@@ -12,6 +12,7 @@ use sqlx::FromRow;
 pub type AgentId = String;
 pub type ConversationId = String;
 pub type MessageId = String;
+pub type MemoryEntryId = String;
 
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
 #[serde(rename_all = "camelCase")]
@@ -25,10 +26,19 @@ pub struct Agent {
     pub model_override: Option<String>,
     pub status: String,
 
-    // Phase 3 — not read or written in Phase 1.
+    // Phase 3 — soul/purpose are first-class identity fields. The legacy
+    // `memory` TEXT column is unused; per-entry memory rows live in the
+    // `memory_entries` table instead.
     pub soul: Option<String>,
     pub purpose: Option<String>,
+    #[allow(dead_code)]
+    #[serde(skip)]
     pub memory: Option<String>,
+    /// 0 = clean, 1 = pending. When 1, the supervisor prepends a
+    /// `<system_update>` block to the next user message so the running
+    /// Claude Code session picks up edits to soul/purpose/memory without
+    /// requiring a full restart.
+    pub identity_dirty: i64,
 
     // Phase 5 — stored as a JSON string in SQLite; empty array by default.
     pub folder_access: String,
@@ -86,6 +96,41 @@ impl MessageRole {
             _ => None,
         }
     }
+}
+
+/// Source attribution for a memory entry. Surfaces in the UI so users
+/// can tell at a glance which entries they wrote, which the agent saved
+/// via `remember`, and which were imported from a CLAUDE.md.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum MemorySource {
+    User,
+    Agent,
+    Imported,
+}
+
+impl MemorySource {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::User => "user",
+            Self::Agent => "agent",
+            Self::Imported => "imported",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+#[serde(rename_all = "camelCase")]
+pub struct MemoryEntry {
+    pub id: MemoryEntryId,
+    pub agent_id: AgentId,
+    pub content: String,
+    pub category: Option<String>,
+    /// "user" | "agent" | "imported" — kept as a string on read so a future
+    /// source variant doesn't break older databases.
+    pub source: String,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]

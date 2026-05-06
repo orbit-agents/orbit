@@ -24,6 +24,11 @@ pub struct SpawnConfig {
     /// If `Some`, resume the given Claude Code session instead of starting
     /// fresh. Captured from the `system/init` event on first spawn.
     pub resume_session_id: Option<String>,
+    /// Phase 3: appended to Claude Code's default system prompt at spawn
+    /// time via `--append-system-prompt`. Built from soul + purpose +
+    /// memory by the caller. `None` means use Claude's defaults only —
+    /// useful for tests and for the empty-identity case.
+    pub system_prompt: Option<String>,
 }
 
 /// Token usage reported at the end of a turn.
@@ -128,10 +133,18 @@ pub trait AgentEngine: Send + Sync {
     /// Send a user message to the named agent. Returns a stream of events
     /// produced by the resulting turn(s), ending in either `TurnComplete`
     /// or `Error`.
+    ///
+    /// `prepend_system_update` is the Phase 3 in-band identity-update
+    /// channel: when the user edits soul/purpose/memory, the supervisor
+    /// passes a short `<system_update>...</system_update>` block here
+    /// and we prepend it to the message text so the running session
+    /// picks up identity changes without a restart. `None` means a
+    /// regular user turn.
     async fn send_message(
         &self,
         agent_id: &AgentId,
         message: &str,
+        prepend_system_update: Option<&str>,
     ) -> Result<BoxStream<'static, AgentEvent>, EngineError>;
 
     /// Gracefully terminate an agent. Safe to call if the agent is already

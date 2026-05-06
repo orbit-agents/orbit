@@ -11,6 +11,7 @@ use std::sync::Arc;
 use sqlx::SqlitePool;
 
 use crate::agents::engine::{AgentEngine, SpawnConfig};
+use crate::agents::prompt_builder::{SystemPromptBuilder, MEMORY_INJECTION_CAP};
 use crate::agents::supervisor::SharedSupervisor;
 use crate::db::queries;
 
@@ -46,16 +47,38 @@ pub async fn rehydrate_agents(
             continue;
         }
 
+        // Build the latest identity prompt from DB state. If the user
+        // edited soul/purpose/memory while the app was closed those
+        // changes land in this prompt — and we also flip identity_dirty
+        // so the next user turn carries a `<system_update>` block as a
+        // belt-and-braces guarantee that the resumed model sees the
+        // latest values even if Claude Code's `--resume` ignores
+        // `--append-system-prompt`.
+        let memory = queries::recent_memory_entries(pool, &agent.id, MEMORY_INJECTION_CAP as i64)
+            .await
+            .unwrap_or_default();
+        let prompt = SystemPromptBuilder {
+            agent_name: agent.name.clone(),
+            working_dir: working_dir.clone(),
+            soul: agent.soul.clone(),
+            purpose: agent.purpose.clone(),
+            memory,
+            other_agents: vec![],
+        }
+        .build();
+
         let cfg = SpawnConfig {
             agent_id: agent.id.clone(),
             working_dir,
             model_override: agent.model_override.clone(),
             resume_session_id: agent.session_id.clone(),
+            system_prompt: Some(prompt),
         };
         match engine.spawn(cfg).await {
             Ok(()) => {
                 tracing::info!(agent_id = %agent.id, "rehydrated agent");
                 let _ = queries::update_agent_status(pool, &agent.id, "idle").await;
+                let _ = queries::set_identity_dirty(pool, &agent.id, true).await;
             }
             Err(e) => {
                 tracing::error!(agent_id = %agent.id, error = %e, "failed to rehydrate agent");

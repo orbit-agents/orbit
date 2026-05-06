@@ -44,6 +44,12 @@ pub fn run() {
             ipc::commands::agent_delete,
             ipc::commands::agent_update_position,
             ipc::commands::agent_rename,
+            ipc::commands::agent_update_identity,
+            ipc::commands::agent_import_claude_md,
+            ipc::commands::memory_list,
+            ipc::commands::memory_create,
+            ipc::commands::memory_update,
+            ipc::commands::memory_delete,
             ipc::commands::system_health_check,
         ])
         .setup(|app| {
