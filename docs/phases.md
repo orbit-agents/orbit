@@ -68,7 +68,7 @@ Soul / Purpose / Memory fields on the agent. System prompt built by templating t
 13. **Marker discussion safety.** Ask the agent "what's the syntax of the remember tool?" — the agent's reply mentions `<remember>...</remember>` mid-prose; verify no spurious memory entry is created.
 14. **Cross-platform.** Same flow on macOS, Windows, and Linux.
 
-## Phase 4 — Agent-to-agent messaging · _In Progress_
+## Phase 4 — Agent-to-agent messaging · _Complete_
 
 Broker implementation, `send_message_to_agent` tool exposed to agents, canvas animations for in-flight messages. Messaging is audited in the DB. V1 Ledger design system applied across the app: ink/line scale tokens, accent green, Geist Sans, OrbitMark logo in the title bar.
 
@@ -105,8 +105,6 @@ Canvas team regions (visual groupings with derived bounds — see ADR 0007). Per
 8. **Folder access — remove.** Hover the row, click the X. The folder is removed from the list. Working dir is never listed (it's the read-only "always allowed" row at the top).
 9. **Folder access enforcement.** With agent A's working dir at `~/api` and no extra allowlist, place a `CLAUDE.md` at `~/lib/CLAUDE.md` and call "Import now" — it should fail with the user-facing "outside this agent's allowed folders" error. Add `~/lib` to the allowlist; the same import succeeds.
 10. **Cross-platform.** Same flow on macOS, Windows, and Linux. Folder paths are canonicalized server-side; allowlists deduplicate symlinked or relative entries.
-
-## Phase 6 — Git isolation · _Planned_
 
 ## Phase 6 — Git isolation · _Complete_
 
