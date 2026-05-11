@@ -198,11 +198,20 @@ The repo ships a project-scoped Claude Code config under [`.claude/`](.claude/RE
 
 ## graphify
 
-This project has a knowledge graph at `graphify-out/` with god nodes, community structure, and cross-file relationships.
+This project integrates [graphify](https://pypi.org/project/graphifyy/) — a knowledge graph (god nodes, community structure, EXTRACTED + INFERRED edges) used as a structural map of the codebase.
 
-Rules:
+**One-time per-contributor setup** (the graph itself is gitignored; each developer builds locally):
 
-- ALWAYS read `graphify-out/GRAPH_REPORT.md` before reading any source files, running grep/glob searches, or answering codebase questions. The graph is your primary map of the codebase.
-- IF `graphify-out/wiki/index.md` EXISTS, navigate it instead of reading raw files.
-- For cross-module "how does X relate to Y" questions, prefer `graphify query "<question>"`, `graphify path "<A>" "<B>"`, or `graphify explain "<concept>"` over grep — these traverse the graph's EXTRACTED + INFERRED edges instead of scanning files.
-- After modifying code, run `graphify update .` to keep the graph current (AST-only, no API cost).
+```bash
+pipx install graphifyy            # or pip install graphifyy
+graphify extract . --backend openai   # ~$0.03 on this repo with OPENAI_API_KEY set
+```
+
+After that, the husky `post-commit` and `post-checkout` hooks rebuild the graph automatically (AST-only, no API cost) on every commit and branch switch.
+
+Rules for the AI assistant:
+
+- IF `graphify-out/GRAPH_REPORT.md` exists, ALWAYS read it before reading source files, running grep/glob searches, or answering codebase questions. The graph is your primary map.
+- IF `graphify-out/wiki/index.md` exists, navigate it instead of reading raw files.
+- For cross-module "how does X relate to Y" questions, prefer `graphify query "<question>"`, `graphify path "<A>" "<B>"`, or `graphify explain "<concept>"` over grep — these traverse EXTRACTED + INFERRED edges instead of scanning files.
+- If `graphify-out/` does not exist, the contributor hasn't built it yet — fall back to grep/glob and don't complain.
