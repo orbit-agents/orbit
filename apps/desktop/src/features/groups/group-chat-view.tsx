@@ -5,6 +5,7 @@ import type { GroupMessage } from '@orbit/types';
 import { cn } from '@/lib/cn';
 import { useAgentsStore } from '@/stores/agents';
 import { useUiStore } from '@/stores/ui-store';
+import { EMPTY_ARRAY } from '@/lib/stable-empty';
 import {
   ipcGroupThreadAddMember,
   ipcGroupThreadDelete,
@@ -45,11 +46,15 @@ function GroupChatBody({
 }): JSX.Element {
   const thread = useAgentsStore((s) => s.groupThreads[threadId]);
   const agents = useAgentsStore((s) => s.agents);
-  const messages = useAgentsStore((s) => s.groupMessagesByThread[threadId] ?? []);
+  const messages = useAgentsStore(
+    (s) => s.groupMessagesByThread[threadId] ?? (EMPTY_ARRAY as GroupMessage[]),
+  );
   const setGroupMessages = useAgentsStore((s) => s.setGroupMessages);
   const setGroupMembers = useAgentsStore((s) => s.setGroupMembers);
   const removeGroupThread = useAgentsStore((s) => s.removeGroupThread);
-  const memberIds = useAgentsStore((s) => s.groupMembersByThread[threadId] ?? []);
+  const memberIds = useAgentsStore(
+    (s) => s.groupMembersByThread[threadId] ?? (EMPTY_ARRAY as string[]),
+  );
   const qc = useQueryClient();
 
   useQuery({

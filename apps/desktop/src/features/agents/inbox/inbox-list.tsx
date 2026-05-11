@@ -4,6 +4,7 @@ import { ArrowRightIcon } from 'lucide-react';
 import type { InterAgentMessage } from '@orbit/types';
 import { cn } from '@/lib/cn';
 import { useAgentsStore } from '@/stores/agents';
+import { EMPTY_ARRAY } from '@/lib/stable-empty';
 import { ipcAgentGetInterAgentMessages } from '@/lib/ipc';
 
 interface InboxListProps {
@@ -18,7 +19,9 @@ interface InboxListProps {
  * `interAgentMessagesByAgent`.
  */
 export function InboxList({ agentId }: InboxListProps): JSX.Element {
-  const messages = useAgentsStore((s) => s.interAgentMessagesByAgent[agentId] ?? []);
+  const messages = useAgentsStore(
+    (s) => s.interAgentMessagesByAgent[agentId] ?? (EMPTY_ARRAY as InterAgentMessage[]),
+  );
   const setInterAgentMessages = useAgentsStore((s) => s.setInterAgentMessages);
   const agents = useAgentsStore((s) => s.agents);
 

@@ -4,6 +4,7 @@ import { BotIcon, FileTextIcon, PencilIcon, SearchIcon, TrashIcon } from 'lucide
 import type { MemoryEntry } from '@orbit/types';
 import { cn } from '@/lib/cn';
 import { useAgentsStore } from '@/stores/agents';
+import { EMPTY_ARRAY } from '@/lib/stable-empty';
 import { ipcMemoryCreate, ipcMemoryDelete, ipcMemoryList, ipcMemoryUpdate } from '@/lib/ipc';
 
 interface MemoryListProps {
@@ -19,7 +20,9 @@ interface MemoryListProps {
  * rather than re-fetching on every event.
  */
 export function MemoryList({ agentId }: MemoryListProps): JSX.Element {
-  const memoriesFromStore = useAgentsStore((s) => s.memoriesByAgent[agentId] ?? []);
+  const memoriesFromStore = useAgentsStore(
+    (s) => s.memoriesByAgent[agentId] ?? (EMPTY_ARRAY as MemoryEntry[]),
+  );
   const setMemories = useAgentsStore((s) => s.setMemories);
   const [search, setSearch] = useState('');
 

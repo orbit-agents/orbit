@@ -4,6 +4,7 @@ import { CheckIcon, PencilIcon, PlusIcon, TrashIcon, XIcon } from 'lucide-react'
 import type { Task } from '@orbit/types';
 import { cn } from '@/lib/cn';
 import { useAgentsStore } from '@/stores/agents';
+import { EMPTY_ARRAY } from '@/lib/stable-empty';
 import { ipcTaskCreate, ipcTaskDelete, ipcTaskList, ipcTaskUpdate } from '@/lib/ipc';
 
 const STATUS_LABELS: Record<string, string> = {
@@ -26,7 +27,7 @@ interface TasksListProps {
  * mount; live updates via `agent:task_*` events.
  */
 export function TasksList({ agentId }: TasksListProps): JSX.Element {
-  const tasks = useAgentsStore((s) => s.tasksByAgent[agentId] ?? []);
+  const tasks = useAgentsStore((s) => s.tasksByAgent[agentId] ?? (EMPTY_ARRAY as Task[]));
   const setTasks = useAgentsStore((s) => s.setTasks);
 
   useQuery({

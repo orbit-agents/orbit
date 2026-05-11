@@ -4,6 +4,7 @@ import type { Message } from '@orbit/types';
 import { cn } from '@/lib/cn';
 import { ipcAgentGetConversation, ipcAgentSendMessage } from '@/lib/ipc';
 import { useAgentsStore } from '@/stores/agents';
+import { EMPTY_ARRAY } from '@/lib/stable-empty';
 import {
   AssistantTextBubble,
   PersistedMessageBubble,
@@ -14,8 +15,10 @@ import { ChatInput } from './chat-input';
 export function AgentChatPanel(): JSX.Element {
   const selectedAgentId = useAgentsStore((s) => s.selectedAgentId);
   const agent = useAgentsStore((s) => (s.selectedAgentId ? s.agents[s.selectedAgentId] : null));
-  const messages = useAgentsStore((s) =>
-    s.selectedAgentId ? (s.messagesByAgent[s.selectedAgentId] ?? []) : [],
+  const messages = useAgentsStore(
+    (s) =>
+      (s.selectedAgentId ? s.messagesByAgent[s.selectedAgentId] : undefined) ??
+      (EMPTY_ARRAY as Message[]),
   );
   const streaming = useAgentsStore((s) =>
     s.selectedAgentId ? s.streamingByAgent[s.selectedAgentId] : null,

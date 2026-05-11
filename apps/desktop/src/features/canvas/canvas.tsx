@@ -66,9 +66,17 @@ const MIN_ZOOM = 0.25;
 const MAX_ZOOM = 2.0;
 
 function CanvasInner({ onRequestSpawn }: Props): JSX.Element {
-  const agents = useAgentsStore(
-    (s) => s.orderedAgentIds.map((id) => s.agents[id]).filter(Boolean) as Agent[],
+  // Subscribe to raw slices and derive the agents array in useMemo. A direct
+  // `(s) => s.orderedAgentIds.map(...).filter(...)` selector returned a new
+  // array reference every call, which under React Flow's <StoreUpdater> caused
+  // an infinite re-render loop (Maximum update depth exceeded).
+  const orderedAgentIds = useAgentsStore((s) => s.orderedAgentIds);
+  const allAgents = useAgentsStore((s) => s.agents);
+  const agents = useMemo(
+    () => orderedAgentIds.map((id) => allAgents[id]).filter(Boolean) as Agent[],
+    [orderedAgentIds, allAgents],
   );
+
   const selectedAgentId = useAgentsStore((s) => s.selectedAgentId);
   const messagesByAgent = useAgentsStore((s) => s.messagesByAgent);
   const streamingByAgent = useAgentsStore((s) => s.streamingByAgent);
@@ -79,7 +87,6 @@ function CanvasInner({ onRequestSpawn }: Props): JSX.Element {
   const teams = useAgentsStore((s) => s.teams);
   const orderedTeamIds = useAgentsStore((s) => s.orderedTeamIds);
   const setAgentTeam = useAgentsStore((s) => s.setAgentTeam);
-  const allAgents = useAgentsStore((s) => s.agents);
 
   const flow = useReactFlow<Node<AgentNodeData>>();
   const containerRef = useRef<HTMLDivElement | null>(null);

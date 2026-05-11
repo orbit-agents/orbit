@@ -94,9 +94,18 @@ function AgentRow({
 export function AgentList({ onSpawnClick }: Props): JSX.Element {
   const [query, setQuery] = useState('');
 
-  const agents = useAgentsStore(
-    (s) => s.orderedAgentIds.map((id) => s.agents[id]).filter(Boolean) as Agent[],
+  // Subscribe to the raw slices (stable references) and derive the array in
+  // useMemo. The previous form `(s) => s.orderedAgentIds.map(...).filter(...)`
+  // returned a new array reference on every selector call — Zustand's default
+  // Object.is equality treated each call as a state change, which combined
+  // with React Flow's <StoreUpdater> below caused an infinite re-render loop.
+  const orderedAgentIds = useAgentsStore((s) => s.orderedAgentIds);
+  const agentsById = useAgentsStore((s) => s.agents);
+  const agents = useMemo(
+    () => orderedAgentIds.map((id) => agentsById[id]).filter(Boolean) as Agent[],
+    [orderedAgentIds, agentsById],
   );
+
   const selectedAgentId = useAgentsStore((s) => s.selectedAgentId);
   const messagesByAgent = useAgentsStore((s) => s.messagesByAgent);
   const streamingByAgent = useAgentsStore((s) => s.streamingByAgent);
