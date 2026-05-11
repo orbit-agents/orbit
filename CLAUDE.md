@@ -107,9 +107,9 @@ Full tokens live in [`apps/desktop/tailwind.config.ts`](apps/desktop/tailwind.co
 
 ## Development phases — what to build and what NOT to build yet
 
-We build in phases. **Do not get ahead of the current phase.** Each phase ships a usable artifact.
+We build in phases. **Do not get ahead of the current phase.** Each phase ships a usable artifact. **Phases 0–8 are all complete** — see [`docs/phases.md`](docs/phases.md) for canonical status. Treat anything beyond Phase 8 as out-of-scope unless a new phase is documented there.
 
-- **Phase 0 — Foundation:** Repo scaffold, three-panel shell, design tokens, CI. _[current]_
+- **Phase 0 — Foundation:** Repo scaffold, three-panel shell, design tokens, CI.
 - **Phase 1 — One agent end-to-end:** Spawn a single Claude Code subprocess, stream output to a chat panel, persist conversations in SQLite.
 - **Phase 2 — Canvas + multiple agents:** React Flow canvas, spawn from "+" button, per-agent nodes with status rings.
 - **Phase 3 — Agent identity + memory:** Soul / Purpose / Memory persisted and injected into system prompts.
