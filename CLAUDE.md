@@ -159,9 +159,39 @@ We build in phases. **Do not get ahead of the current phase.** Each phase ships 
 - If you're about to add a new top-level dependency, check it against the stack table first and justify it in your response.
 - If something is inconsistent between the code and this document, trust the code and update this document in the same PR.
 
+## `.claude/` reference
+
+The repo ships a project-scoped Claude Code config under [`.claude/`](.claude/README.md). Use it instead of reinventing the workflow each session.
+
+**Settings**
+
+- [`.claude/settings.json`](.claude/settings.json) — Allow-list for safe `pnpm` / `cargo` / `git` / `gh` commands and a deny-list for destructive shell ops and secret files. Personal overrides go in `.claude/settings.local.json` (gitignored).
+
+**Subagents** (`.claude/agents/`, invoke via the `Agent` tool)
+
+- [`phase-guard`](.claude/agents/phase-guard.md) — Verifies a change does not get ahead of the current build phase (see [`docs/phases.md`](docs/phases.md)) and respects the non-negotiable rules above. Run before landing non-trivial work.
+- [`rust-reviewer`](.claude/agents/rust-reviewer.md) — Reviews Rust against the conventions in this file (`thiserror` / `anyhow` split, `tracing`, module boundaries, cross-platform gates).
+- [`ts-strict-checker`](.claude/agents/ts-strict-checker.md) — Reviews TS/React against strict-mode rules and the design-token allow-list.
+
+**Slash commands** (`.claude/commands/`)
+
+- [`/check`](.claude/commands/check.md) — `pnpm lint && pnpm typecheck && pnpm test`. The "is the tree green?" command.
+- [`/test`](.claude/commands/test.md) — Scoped test runner (workspace, package, or test name).
+- [`/lint`](.claude/commands/lint.md) — ESLint + `cargo clippy`.
+- [`/typecheck`](.claude/commands/typecheck.md) — `tsc --noEmit` across the workspace.
+- [`/adr`](.claude/commands/adr.md) — Scaffold a new ADR under [`docs/decisions/`](docs/decisions/).
+- [`/tauri-dev`](.claude/commands/tauri-dev.md) — Start the Tauri desktop app in dev mode.
+
+**Project skills** (`.claude/skills/`, invoke via the `Skill` tool)
+
+- [`orbit-conventions`](.claude/skills/orbit-conventions/SKILL.md) — Fast-recall index of the non-negotiable rules and design tokens. Load before coding.
+- [`writing-an-adr`](.claude/skills/writing-an-adr/SKILL.md) — Guide for writing tight, decision-first ADRs in this repo.
+
 ## References
 
 - Product inspiration: [pentagon.run](https://pentagon.run) (docs at [docs.pentagon.run](https://docs.pentagon.run))
 - Canvas library: [React Flow (@xyflow/react)](https://reactflow.dev)
 - Tauri 2 docs: <https://tauri.app>
 - Claude Code: <https://docs.claude.com/claude-code>
+- Project docs: [`docs/architecture.md`](docs/architecture.md), [`docs/phases.md`](docs/phases.md), [`docs/decisions/`](docs/decisions/)
+- Project Claude Code config: [`.claude/README.md`](.claude/README.md)
