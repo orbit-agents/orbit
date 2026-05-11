@@ -35,7 +35,8 @@
       "prettier --write"
     ],
     "apps/desktop/src-tauri/**/*.rs": [
-      "rustfmt --edition 2021"
+      "rustfmt --edition 2021",
+      "sh -c 'cargo clippy --manifest-path apps/desktop/src-tauri/Cargo.toml --all-targets --no-deps -- -D warnings'"
     ]
   }
 }
