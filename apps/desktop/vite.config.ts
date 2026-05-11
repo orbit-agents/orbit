@@ -19,7 +19,12 @@ export default defineConfig(async () => ({
   server: {
     port: 1420,
     strictPort: true,
-    host: host || false,
+    // Default to 127.0.0.1 (IPv4) instead of `false`. On Linux, Node + Vite
+    // bind `false` to IPv6 `[::1]` only; WebKitGTK's network process resolves
+    // `localhost` to `127.0.0.1` first and gets connection-refused, producing
+    // a silent black webview. Forcing IPv4 fixes that. `TAURI_DEV_HOST`
+    // overrides this for the mobile/remote-device dev flow.
+    host: host || '127.0.0.1',
     hmr: host
       ? {
           protocol: 'ws',
